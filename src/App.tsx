@@ -15,7 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { FileDropZone } from "@/components/FileDropZone";
-import { FileTree, TRANSLATABLE } from "@/components/FileTree";
+import { FileTree, LOCALIZATION_KINDS } from "@/components/FileTree";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { TranslationTable } from "@/components/TranslationTable";
 import { useAppStore } from "@/store/app-store";
@@ -105,34 +105,37 @@ function HomePage() {
 
 function FilesPage() {
   const files = useAppStore((s) => s.files);
-  const selectedFile = useAppStore((s) => s.selectedFile);
-  const selectFile = useAppStore((s) => s.selectFile);
+  const selectedFiles = useAppStore((s) => s.selectedFiles);
+  const setSelectedFiles = useAppStore((s) => s.setSelectedFiles);
   const workDir = useAppStore((s) => s.workDir);
-  const entries = useAppStore((s) => s.entries);
+  const entriesByFile = useAppStore((s) => s.entriesByFile);
   const setStage = useAppStore((s) => s.setStage);
   const setError = useAppStore((s) => s.setError);
 
   const onGoPack = async () => {
     if (!workDir) return;
-    // 先把当前编辑写回文件
-    if (selectedFile && entries.length > 0) {
-      try {
-        await writeFileEntries(workDir, selectedFile.name, entries);
-      } catch (e) {
-        setError(String(e));
-        return;
+    // 把所有已加载、有内容的文件条目写回工作目录
+    try {
+      for (const f of selectedFiles) {
+        const entries = entriesByFile[f.name];
+        if (entries && entries.length > 0) {
+          await writeFileEntries(workDir, f.name, entries);
+        }
       }
+    } catch (e) {
+      setError(String(e));
+      return;
     }
     setStage("done");
   };
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-[280px_1fr] gap-0">
+    <div className="grid min-h-0 flex-1 grid-cols-[300px_1fr] gap-0">
       <div className="min-h-0 border-r">
         <FileTree
           files={files}
-          selectedFile={selectedFile}
-          onSelect={(f) => selectFile(f)}
+          selectedFiles={selectedFiles}
+          onSelectionChange={setSelectedFiles}
         />
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
@@ -145,7 +148,7 @@ function FilesPage() {
             <ChevronRight className="h-4 w-4 rotate-180" />
             返回
           </Button>
-          <Button onClick={onGoPack} disabled={!workDir}>
+          <Button onClick={onGoPack} disabled={!workDir || selectedFiles.length === 0}>
             <CheckCircle2 className="h-4 w-4" />
             完成翻译，去打包
           </Button>
@@ -188,7 +191,7 @@ function DonePage() {
     }
   };
 
-  const translatable = files.filter((f) => TRANSLATABLE.includes(f.kind));
+  const translatable = files.filter((f) => LOCALIZATION_KINDS.includes(f.kind));
 
   return (
     <div className="flex items-center justify-center p-6">

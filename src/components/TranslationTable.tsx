@@ -22,7 +22,10 @@ import type { TranslationEntry, TranslationStatus } from "@/lib/types";
 
 const STATUS_META: Record<
   TranslationStatus,
-  { label: string; variant: "default" | "secondary" | "success" | "warning" | "destructive" }
+  {
+    label: string;
+    variant: "default" | "secondary" | "success" | "warning" | "destructive";
+  }
 > = {
   pending: { label: "待翻译", variant: "secondary" },
   translating: { label: "翻译中", variant: "warning" },
@@ -31,11 +34,19 @@ const STATUS_META: Record<
   error: { label: "错误", variant: "destructive" },
 };
 
+/** 从完整路径提取简短的文件来源标签，如 Localization/English/x.xml → English/x.xml */
+function shortSource(fileName: string): string {
+  const parts = fileName.split("/").filter(Boolean);
+  if (parts.length <= 2) return fileName;
+  return parts.slice(-2).join("/");
+}
+
 export function TranslationTable() {
   const workDir = useAppStore((s) => s.workDir);
-  const selectedFile = useAppStore((s) => s.selectedFile);
-  const entries = useAppStore((s) => s.entries);
-  const setEntries = useAppStore((s) => s.setEntries);
+  const selectedFiles = useAppStore((s) => s.selectedFiles);
+  const entriesByFile = useAppStore((s) => s.entriesByFile);
+  const loadedFileNames = useAppStore((s) => s.loadedFileNames);
+  const setFileEntries = useAppStore((s) => s.setFileEntries);
   const updateEntry = useAppStore((s) => s.updateEntry);
   const setEntryStatus = useAppStore((s) => s.setEntryStatus);
   const appendDelta = useAppStore((s) => s.appendDelta);
@@ -48,10 +59,48 @@ export function TranslationTable() {
   const [search, setSearch] = useState("");
   const [onlyPending, setOnlyPending] = useState(false);
 
+  // 选中文件变化时，为新加入且未加载的文件加载条目
+  useEffect(() => {
+    if (!workDir || selectedFiles.length === 0) return;
+    const toLoad = selectedFiles.filter((f) => !loadedFileNames.has(f.name));
+    if (toLoad.length === 0) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    Promise.all(
+      toLoad.map((f) =>
+        readFileEntries(workDir, f.name)
+          .then((entries) => {
+            if (!cancelled) setFileEntries(f.name, entries);
+          })
+          .catch((e) => {
+            if (!cancelled) setError(`${f.name}: ${String(e)}`);
+            // 即使失败也标记已加载，避免重复尝试
+            if (!cancelled) setFileEntries(f.name, []);
+          }),
+      ),
+    ).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [workDir, selectedFiles, loadedFileNames, setFileEntries, setError]);
+
+  // 聚合所有选中文件的条目
+  const allEntries = useMemo(() => {
+    const out: TranslationEntry[] = [];
+    for (const f of selectedFiles) {
+      const list = entriesByFile[f.name];
+      if (list) out.push(...list);
+    }
+    return out;
+  }, [selectedFiles, entriesByFile]);
+
   // 搜索 + 过滤
   const visibleEntries = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return entries.filter((e) => {
+    return allEntries.filter((e) => {
       if (onlyPending && e.target) return false;
       if (!q) return true;
       return (
@@ -60,42 +109,37 @@ export function TranslationTable() {
         e.contentuid.toLowerCase().includes(q)
       );
     });
-  }, [entries, search, onlyPending]);
+  }, [allEntries, search, onlyPending]);
 
-  // 选中文件变化时加载条目
-  useEffect(() => {
-    if (!workDir || !selectedFile) return;
-    setLoading(true);
-    setError(null);
-    readFileEntries(workDir, selectedFile.name)
-      .then((data) => setEntries(data))
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workDir, selectedFile?.name]);
+  const total = allEntries.length;
+  const done = allEntries.filter(
+    (e) => e.status === "translated" || e.status === "edited",
+  ).length;
 
-  if (!selectedFile) {
+  if (selectedFiles.length === 0) {
     return (
       <Card className="flex h-full flex-col items-center justify-center p-8 text-center text-muted-foreground">
         <Languages className="mb-3 h-10 w-10" />
-        <p>从左侧选择一个本地化文件开始翻译</p>
-        <p className="mt-1 text-xs">（标有"本地化 XML/LOCA"或"元数据"的文件）</p>
+        <p>从左侧勾选本地化文件开始翻译</p>
+        <p className="mt-1 text-xs">支持勾选多个文件一起翻译</p>
       </Card>
     );
   }
 
-  // 统计
-  const total = entries.length;
-  const done = entries.filter(
-    (e) => e.status === "translated" || e.status === "edited",
-  ).length;
-
   const onTranslate = async () => {
     if (!workDir) return;
+    // 收集所有待翻译条目
+    const toTranslate = allEntries.filter(
+      (e) => e.source.length > 0 && e.target === "",
+    );
+    if (toTranslate.length === 0) {
+      setError("没有待翻译的条目（所有条目已有译文）");
+      return;
+    }
     setTranslating(true);
     setError(null);
     try {
-      await translateEntries(workDir, entries, (e) => {
+      await translateEntries(workDir, allEntries, (e) => {
         switch (e.type) {
           case "progress":
             setEntryStatus(e.entryId, e.status);
@@ -142,17 +186,22 @@ export function TranslationTable() {
     updateEntry(entry.id, { target: "", status: "pending", error: null });
   };
 
+  const pendingCount = total - done;
+
   return (
     <Card className="flex h-full flex-col">
       {/* 工具栏 */}
       <div className="space-y-2 border-b p-3">
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0">
-            <h3 className="truncate text-sm font-semibold">
-              {selectedFile.name}
+            <h3 className="text-sm font-semibold">
+              翻译工作区
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                {selectedFiles.length} 个文件，{total} 条
+              </span>
             </h3>
             <p className="text-xs text-muted-foreground">
-              {loading ? "加载中…" : `共 ${total} 条`}
+              {loading ? "加载中…" : `已翻译 ${done}/${total}`}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -177,7 +226,7 @@ export function TranslationTable() {
               ) : (
                 <>
                   <Play className="h-4 w-4" />
-                  翻译全部
+                  {pendingCount > 0 ? `翻译 ${pendingCount} 条` : "翻译全部"}
                 </>
               )}
             </Button>
@@ -200,7 +249,8 @@ export function TranslationTable() {
               className="h-8 text-xs"
               onClick={() => setOnlyPending(!onlyPending)}
             >
-              {onlyPending ? "✓ " : ""}仅待翻译
+              {onlyPending ? "✓ " : ""}
+              仅待翻译
             </Button>
           </div>
         )}
@@ -213,9 +263,9 @@ export function TranslationTable() {
             <Loader2 className="mr-2 h-5 w-5 animate-spin" />
             加载条目…
           </div>
-        ) : entries.length === 0 ? (
+        ) : total === 0 ? (
           <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
-            该文件没有可翻译条目
+            选中文件没有可翻译条目
           </div>
         ) : visibleEntries.length === 0 ? (
           <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
@@ -234,12 +284,12 @@ export function TranslationTable() {
               >
                 {/* 原文 */}
                 <div className="space-y-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[10px] text-muted-foreground">
                       原文
                     </span>
                     <Badge
-                      variant={STATUS_META[entry.status].variant}
+                      variant={STATUS_META[entry.status as TranslationStatus].variant}
                       className="text-[10px]"
                     >
                       {entry.status === "translating" && (
@@ -248,8 +298,11 @@ export function TranslationTable() {
                       {entry.status === "error" && (
                         <AlertCircle className="mr-1 h-2.5 w-2.5" />
                       )}
-                      {STATUS_META[entry.status].label}
+                      {STATUS_META[entry.status as TranslationStatus].label}
                     </Badge>
+                    <span className="rounded bg-muted px-1.5 text-[10px] text-muted-foreground">
+                      {shortSource(entry.sourceFile)}
+                    </span>
                   </div>
                   <p className="rounded bg-muted/50 p-2 text-sm">
                     {entry.source}
@@ -324,7 +377,9 @@ export function TranslationTable() {
                     <p
                       className={cn(
                         "min-h-[36px] rounded border border-transparent p-2 text-sm",
-                        entry.target ? "bg-primary/5" : "bg-muted/30 text-muted-foreground italic",
+                        entry.target
+                          ? "bg-primary/5"
+                          : "bg-muted/30 italic text-muted-foreground",
                         entry.error && "text-destructive",
                       )}
                     >
