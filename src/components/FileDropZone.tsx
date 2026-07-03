@@ -1,13 +1,7 @@
 import { useCallback, useRef, useState } from "react";
-import { FileArchive, FolderOpen, Loader2 } from "lucide-react";
+import { FolderOpen, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { pickModFile, openMod } from "@/lib/tauri";
 import { useAppStore } from "@/store/app-store";
 
@@ -57,8 +51,8 @@ export function FileDropZone() {
 
   return (
     <Card
-      className={`border-2 border-dashed transition-colors ${
-        dragOver ? "border-primary bg-accent/50" : "border-border"
+      className={`flex min-h-[360px] cursor-pointer flex-col items-center justify-center border-2 border-dashed p-8 text-center transition-colors md:min-h-[440px] ${
+        dragOver ? "border-primary bg-accent/50" : "border-border hover:border-primary/50"
       }`}
       onDragOver={(e) => {
         e.preventDefault();
@@ -66,58 +60,51 @@ export function FileDropZone() {
       }}
       onDragLeave={() => setDragOver(false)}
       onDrop={onDrop}
+      onClick={loading ? undefined : onClickPick}
     >
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <FileArchive className="h-5 w-5" />
-          选择 MOD 文件
-        </CardTitle>
-        <CardDescription>
-          支持 .pak 或 .zip（Nexus 标准打包）格式的博德之门3 MOD
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="flex flex-col items-center justify-center gap-4 py-8">
-          <div className="rounded-full bg-muted p-4">
-            <FolderOpen className="h-8 w-8 text-muted-foreground" />
-          </div>
+      <div className="flex flex-col items-center justify-center gap-5">
+        <div
+          className={`rounded-2xl bg-primary/10 p-6 transition-transform ${
+            dragOver ? "scale-110" : ""
+          }`}
+        >
+          {loading ? (
+            <Loader2 className="h-12 w-12 animate-spin text-primary" />
+          ) : (
+            <FolderOpen className="h-12 w-12 text-primary" />
+          )}
+        </div>
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold md:text-xl">
+            {loading ? "正在解包…" : "打开 MOD 文件"}
+          </h2>
           <p className="text-sm text-muted-foreground">
-            拖拽文件到此处，或点击下方按钮选择
-          </p>
-          <Button
-            onClick={onClickPick}
-            disabled={loading}
-            size="lg"
-            ref={undefined}
-          >
-            {loading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                解包中…
-              </>
-            ) : (
-              <>
-                <FolderOpen className="h-4 w-4" />
-                选择 MOD 文件
-              </>
-            )}
-          </Button>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".pak,.zip"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              const path = (f as unknown as { path?: string })?.path;
-              if (path) handleOpen(path);
-            }}
-          />
-          <p className="max-w-md text-center text-xs text-muted-foreground">
-            提示：samples 目录下有测试用 MOD。所有处理在本地完成，不会上传你的文件。
+            {loading
+              ? "请稍候，正在解析 PAK 内容"
+              : "拖拽 .pak 或 .zip 文件到此区域，或点击选择"}
           </p>
         </div>
-      </CardContent>
+        {!loading && (
+          <Button size="lg" onClick={(e) => { e.stopPropagation(); onClickPick(); }}>
+            <FolderOpen className="h-4 w-4" />
+            选择文件
+          </Button>
+        )}
+        <p className="max-w-sm text-xs text-muted-foreground">
+          支持 Nexus 标准打包的 .zip 和 BG3 原生 .pak 格式
+        </p>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".pak,.zip"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          const path = (f as unknown as { path?: string })?.path;
+          if (path) handleOpen(path);
+        }}
+      />
     </Card>
   );
 }

@@ -4,7 +4,6 @@ import {
   ChevronRight,
   Languages,
   Package,
-  Shield,
   BookOpen,
   Settings,
   Palette,
@@ -130,57 +129,12 @@ function Header({
   );
 }
 
-function HomePage({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const settings = useAppStore((s) => s.settings);
-  const configured = settings.apiKey.length > 0;
+function HomePage() {
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-4 p-4 md:p-8">
-      <FileDropZone />
-      {/* 紧凑的配置状态条 */}
-      <Card>
-        <CardContent className="flex items-center justify-between p-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <Settings className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="truncate text-sm font-medium">
-                {configured ? settings.model : "未配置大模型"}
-              </span>
-              <span
-                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
-                  configured
-                    ? "bg-emerald-500/15 text-emerald-600"
-                    : "bg-amber-500/15 text-amber-600"
-                }`}
-              >
-                {configured ? "已就绪" : "需配置"}
-              </span>
-            </div>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">
-              {configured ? settings.baseUrl : "点击右侧按钮配置 API（支持 DeepSeek/智谱/OpenAI 等）"}
-            </p>
-          </div>
-          <Button size="sm" variant="outline" className="ml-3 shrink-0" onClick={onOpenSettings}>
-            配置
-          </Button>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Shield className="h-4 w-4" />
-            工作流程
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ol className="space-y-2 text-sm text-muted-foreground">
-            <li>1. 选择 MOD 文件（.pak 或 .zip）</li>
-            <li>2. 配置大模型 API（OpenAI 兼容协议）</li>
-            <li>3. 自动解包，识别可翻译的本地化文件</li>
-            <li>4. 流式翻译，人工校对</li>
-            <li>5. 原样重新打包为 .pak</li>
-          </ol>
-        </CardContent>
-      </Card>
+    <div className="flex min-h-0 flex-1 items-center justify-center p-4 md:p-8">
+      <div className="w-full max-w-2xl">
+        <FileDropZone />
+      </div>
     </div>
   );
 }
@@ -344,6 +298,24 @@ function DonePage() {
   );
 }
 
+function SettingsPage({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="flex h-full flex-col">
+      {/* 顶部工具栏 */}
+      <div className="flex items-center justify-between border-b px-6 py-3">
+        <h2 className="text-sm font-semibold">设置</h2>
+        <Button size="sm" variant="ghost" onClick={onClose}>
+          完成
+        </Button>
+      </div>
+      {/* 内容区：可滚动，居中限宽 */}
+      <div className="mx-auto w-full max-w-xl flex-1 overflow-auto p-6">
+        <SettingsPanel />
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const stage = useAppStore((s) => s.stage);
   const error = useAppStore((s) => s.error);
@@ -379,19 +351,14 @@ function App() {
             : "flex-1 overflow-auto"
         }
       >
-        {stage === "home" && <HomePage onOpenSettings={() => setShowSettings(true)} />}
+        {stage === "home" && <HomePage />}
         {stage === "files" && <FilesPage />}
         {stage === "done" && <DonePage />}
       </div>
-      {/* 设置面板（覆盖层）*/}
+      {/* 设置面板（全屏覆盖层）*/}
       {showSettings && (
-        <div className="absolute inset-0 z-40 flex items-start justify-center overflow-auto bg-black/40 p-4 md:p-8">
-          <div className="w-full max-w-md">
-            <SettingsPanel compact={false} />
-            <div className="mt-3 flex justify-center">
-              <Button onClick={() => setShowSettings(false)}>完成</Button>
-            </div>
-          </div>
+        <div className="absolute inset-0 z-40 bg-background">
+          <SettingsPage onClose={() => setShowSettings(false)} />
         </div>
       )}
       {/* 术语表面板（覆盖层）*/}
