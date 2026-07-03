@@ -134,7 +134,10 @@ export function TranslationTable() {
 
   if (selectedFiles.length === 0) {
     return (
-      <Card className="flex h-full flex-col items-center justify-center p-8 text-center text-muted-foreground">
+      <Card
+        variant="flat"
+        className="flex h-full flex-col items-center justify-center p-8 text-center text-muted-foreground"
+      >
         <Languages className="mb-3 h-10 w-10" />
         <p>从左侧勾选本地化文件开始翻译</p>
         <p className="mt-1 text-xs">支持勾选多个文件一起翻译</p>
@@ -205,7 +208,7 @@ export function TranslationTable() {
   const pendingCount = total - done;
 
   return (
-    <Card className="flex h-full flex-col">
+    <Card variant="flat" className="flex h-full flex-col">
       {/* 工具栏 */}
       <div className="space-y-2 border-b p-3">
         <div className="flex items-center justify-between gap-4">
@@ -316,11 +319,11 @@ export function TranslationTable() {
                       )}
                       {STATUS_META[entry.status as TranslationStatus].label}
                     </Badge>
-                    <span className="rounded bg-muted px-1.5 text-[10px] text-muted-foreground">
+                    <span className="bg-muted px-1.5 text-[10px] text-muted-foreground">
                       {shortSource(entry.sourceFile)}
                     </span>
                   </div>
-                  <p className="rounded bg-muted/50 p-2 text-sm">
+                  <p className="bg-muted/50 p-2 text-sm">
                     {entry.source}
                   </p>
                 </div>
@@ -392,7 +395,7 @@ export function TranslationTable() {
                   ) : (
                     <p
                       className={cn(
-                        "min-h-[36px] rounded border border-transparent p-2 text-sm",
+                        "min-h-[36px] border border-transparent p-2 text-sm",
                         entry.target
                           ? "bg-primary/5"
                           : "bg-muted/30 italic text-muted-foreground",

@@ -166,7 +166,7 @@ function TreeRow({
       )}
       <span className="flex-1 truncate text-left">{node.name}</span>
       {KIND_LABEL[file.kind] && (
-        <span className="shrink-0 rounded bg-secondary px-1.5 text-[10px] text-secondary-foreground">
+        <span className="shrink-0 bg-secondary px-1.5 text-[10px] text-secondary-foreground">
           {KIND_LABEL[file.kind]}
         </span>
       )}
@@ -227,7 +227,7 @@ export function FileTree({
   };
 
   return (
-    <Card className="flex h-full flex-col">
+    <Card variant="flat" className="flex h-full flex-col">
       <div className="space-y-2 border-b p-3">
         <div className="flex items-center justify-between">
           <div>
