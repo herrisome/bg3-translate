@@ -7,10 +7,15 @@ use crate::types::LlmSettings;
 
 /// 配置文件路径：<config_dir>/bg3-translate/settings.json
 fn config_path() -> Result<PathBuf> {
+    Ok(config_dir().join("settings.json"))
+}
+
+/// 应用配置目录：<config_dir>/bg3-translate/（供 glossary 等模块复用）
+pub fn config_dir() -> PathBuf {
     let dir = dirs_next();
     let cfg = dir.join("bg3-translate");
-    std::fs::create_dir_all(&cfg)?;
-    Ok(cfg.join("settings.json"))
+    let _ = std::fs::create_dir_all(&cfg);
+    cfg
 }
 
 /// macOS/Linux/Windows 各自的用户配置目录。

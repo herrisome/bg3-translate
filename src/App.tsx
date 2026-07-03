@@ -5,6 +5,7 @@ import {
   Languages,
   Package,
   Shield,
+  BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +17,7 @@ import {
 } from "@/components/ui/card";
 import { FileDropZone } from "@/components/FileDropZone";
 import { FileTree, LOCALIZATION_KINDS } from "@/components/FileTree";
+import { GlossaryPanel } from "@/components/GlossaryPanel";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { TranslationTable } from "@/components/TranslationTable";
 import { useAppStore } from "@/store/app-store";
@@ -56,7 +58,7 @@ function Stepper() {
   );
 }
 
-function Header() {
+function Header({ onOpenGlossary }: { onOpenGlossary: () => void }) {
   return (
     <header className="flex items-center justify-between border-b px-6 py-3">
       <div className="flex items-center gap-2">
@@ -70,7 +72,13 @@ function Header() {
           </p>
         </div>
       </div>
-      <Stepper />
+      <div className="flex items-center gap-3">
+        <Stepper />
+        <Button size="sm" variant="outline" onClick={onOpenGlossary}>
+          <BookOpen className="h-4 w-4" />
+          术语表
+        </Button>
+      </div>
     </header>
   );
 }
@@ -265,6 +273,7 @@ function App() {
   const stage = useAppStore((s) => s.stage);
   const error = useAppStore((s) => s.error);
   const setError = useAppStore((s) => s.setError);
+  const [showGlossary, setShowGlossary] = useState(false);
 
   // 错误 toast（简化版：顶部 banner）
   useEffect(() => {
@@ -275,8 +284,8 @@ function App() {
   }, [error, setError]);
 
   return (
-    <div className="flex h-screen flex-col bg-background">
-      <Header />
+    <div className="relative flex h-screen flex-col bg-background">
+      <Header onOpenGlossary={() => setShowGlossary(true)} />
       {error && (
         <div className="bg-destructive px-6 py-2 text-sm text-destructive-foreground">
           ⚠ {error}
@@ -295,6 +304,12 @@ function App() {
         {stage === "files" && <FilesPage />}
         {stage === "done" && <DonePage />}
       </div>
+      {/* 术语表面板（覆盖层）*/}
+      {showGlossary && (
+        <div className="absolute inset-0 z-40 bg-background">
+          <GlossaryPanel onClose={() => setShowGlossary(false)} />
+        </div>
+      )}
     </div>
   );
 }

@@ -2,6 +2,8 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import type {
   ExtractResult,
+  Glossary,
+  GlossaryEntry,
   LlmSettings,
   TranslationEntry,
   TranslationEvent,
@@ -91,4 +93,41 @@ export async function translateEntries(
   const channel = new Channel<TranslationEvent>();
   channel.onmessage = onEvent;
   await invoke("translate_entries", { workDir, entries, onEvent: channel });
+}
+
+// ─────────────────────────────────────────────────────────────
+// 术语表
+// ─────────────────────────────────────────────────────────────
+
+/** 读取术语表 */
+export async function listGlossary(): Promise<Glossary> {
+  return invoke<Glossary>("list_glossary");
+}
+
+/** 新增术语 */
+export async function addGlossaryEntry(entry: GlossaryEntry): Promise<Glossary> {
+  return invoke<Glossary>("add_glossary_entry", { entry });
+}
+
+/** 更新术语 */
+export async function updateGlossaryEntry(
+  oldSource: string,
+  entry: GlossaryEntry,
+): Promise<Glossary> {
+  return invoke<Glossary>("update_glossary_entry", { oldSource, entry });
+}
+
+/** 删除术语 */
+export async function deleteGlossaryEntry(source: string): Promise<Glossary> {
+  return invoke<Glossary>("delete_glossary_entry", { source });
+}
+
+/** 重置术语表为官方种子 */
+export async function resetGlossary(): Promise<Glossary> {
+  return invoke<Glossary>("reset_glossary");
+}
+
+/** 导入术语表 JSON（从游戏提取的完整官方术语表） */
+export async function importGlossary(jsonStr: string): Promise<Glossary> {
+  return invoke<Glossary>("import_glossary", { jsonStr });
 }

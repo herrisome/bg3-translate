@@ -32,6 +32,9 @@ tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 # XML 解析
 quick-xml = "0.37"
 
+# 正则（术语表命中检测）
+regex = "1"
+
 # 错误处理
 thiserror = "2"
 anyhow = "1"

@@ -19,21 +19,42 @@ use crate::error::{AppError, Result};
 use crate::types::{LlmSettings, TranslationEntry, TranslationEvent, TranslationStatus};
 
 /// D&D / BG3 世界观语境的系统 prompt。
+///
+/// 注意：具体术语译名不再硬编码于此，而是通过术语表动态注入。
+/// 见 build_user_prompt() 中命中的术语会被作为参考附在 user message。
 pub const SYSTEM_PROMPT: &str = r#"你是一位精通《龙与地下城》第五版（D&D 5e）和《博德之门3》（Baldur's Gate 3）的专业游戏本地化译者，正在将游戏 MOD 文本从英文翻译为简体中文。
 
 请严格遵守以下规则：
 
-1. **世界观语境**：使用费伦大陆（Faerûn）、被遗忘的国度（Forgotten Realms）的官方译名风格。D&D 核心术语遵循官方中文译法（如 "Paladin"=圣武士、"Sorcerer"=术士、"Warlock"=邪术师、"Rogue"=游荡者、"Cleric"=牧师、"Barbarian"=野蛮人、"Wizard"=法师、"Druid"=德鲁伊、"Ranger"=游侠、"Bard"=吟游诗人、"Monk"=武僧、"Fighter"=战士）。
+1. **世界观语境**：使用费伦大陆（Faerûn）、被遗忘的国度（Forgotten Realms）的官方译名风格。
 
-2. **保留占位符**：文本中的 `{1}`、`{2}` 等参数占位符必须原样保留，数量与位置不可改变。
+2. **严格遵循术语表**：如果文本下方附有【术语参考】，必须严格使用其中给出的官方译名，不可自行更改。如 "Paladin"=圣武士（非"圣骑士"）、"Warlock"=邪术师（非"术士"）、"Rogue"=游荡者（非"盗贼"）。
 
-3. **保留富文本标签**：形如 `<LSTag Tag="...">...</LSTag>`、`<font>...</font>`、`<i>...</i>` 的标签必须完整保留，只翻译标签外的自然语言文本。标签内的英文内容（如 Tag 属性值）不要翻译。
+3. **保留占位符**：文本中的 `{1}`、`{2}` 等参数占位符必须原样保留，数量与位置不可改变。
 
-4. **语体**：贴合游戏叙事风格。法术/物品描述用典雅书面语，对话用自然口语，UI 按钮用简洁短语。保持原文的语气和正式程度。
+4. **保留富文本标签**：形如 `<LSTag Tag="...">...</LSTag>`、`<font>...</font>`、`<i>...</i>` 的标签必须完整保留，只翻译标签外的自然语言文本。标签内的英文内容（如 Tag 属性值）不要翻译。
 
-5. **专有名词**：BG3 已有官方译名的角色、地点、物品优先用官方译法（如 "Baldur's Gate"=博德之门、"Avernus"=阿佛纳斯、"Mind Flayer"=夺心魔、"Tadpole"=蝌蚪）。
+5. **语体**：贴合游戏叙事风格。法术/物品描述用典雅书面语，对话用自然口语，UI 按钮用简洁短语。保持原文的语气和正式程度。
 
 6. **只输出译文**：不要添加注释、解释、引号或前后缀。"#;
+
+/// 构造 user prompt：注入命中的术语作为参考（未命中则不附加，省 token）。
+fn build_user_prompt(source: &str, matches: &[crate::glossary::MatchedTerm]) -> String {
+    if matches.is_empty() {
+        format!("请将以下文本翻译为简体中文，只输出译文，不要任何解释或前后缀：\n\n{source}")
+    } else {
+        let terms: Vec<String> = matches
+            .iter()
+            .map(|m| format!("{} = {}", m.source, m.target))
+            .collect();
+        format!(
+            "请将以下文本翻译为简体中文，只输出译文，不要任何解释或前后缀。\n\n\
+             【术语参考】（严格使用以下官方译名，不可更改）：\n{}\n\n\
+             原文：\n{source}",
+            terms.join("\n")
+        )
+    }
+}
 
 /// 批量流式翻译入口：逐条并发流式翻译。
 ///
@@ -43,13 +64,18 @@ pub const SYSTEM_PROMPT: &str = r#"你是一位精通《龙与地下城》第五
 pub async fn translate_entries(
     client: &Client,
     settings: &LlmSettings,
+    glossary: &crate::glossary::Glossary,
     entries: &[TranslationEntry],
     on_event: &Channel<TranslationEvent>,
 ) -> Result<()> {
-    // 筛选待翻译条目
-    let to_translate: Vec<&TranslationEntry> = entries
+    // 筛选待翻译条目，并预计算每条命中的术语（避免并发任务内重复匹配）
+    let to_translate: Vec<(&TranslationEntry, Vec<crate::glossary::MatchedTerm>)> = entries
         .iter()
         .filter(|e| !e.source.is_empty() && e.target.is_empty())
+        .map(|e| {
+            let matches = crate::glossary::find_matches(&e.source, glossary);
+            (e, matches)
+        })
         .collect();
 
     if to_translate.is_empty() {
@@ -73,7 +99,7 @@ pub async fn translate_entries(
 
     // 为每条创建独立的并发任务
     let mut tasks = Vec::new();
-    for entry in to_translate {
+    for (entry, matches) in to_translate {
         let permit = semaphore
             .clone()
             .acquire_owned()
@@ -88,8 +114,10 @@ pub async fn translate_entries(
         let source = entry.source.clone();
         tasks.push(tokio::spawn(async move {
             let _permit = permit; // 持有 permit 直到本条完成
-            translate_one_with_retry(&client, &url, &api_key, &model, &entry_id, &source, &channel)
-                .await
+            translate_one_with_retry(
+                &client, &url, &api_key, &model, &entry_id, &source, &matches, &channel,
+            )
+            .await
         }));
     }
 
@@ -124,11 +152,14 @@ async fn translate_one_with_retry(
     model: &str,
     entry_id: &str,
     source: &str,
+    matches: &[crate::glossary::MatchedTerm],
     on_event: &Channel<TranslationEvent>,
 ) -> Result<()> {
     let mut last_err = String::new();
     for attempt in 1..=3u32 {
-        match translate_one_stream(client, url, api_key, model, entry_id, source, on_event).await {
+        match translate_one_stream(client, url, api_key, model, entry_id, source, matches, on_event)
+            .await
+        {
             Ok(()) => return Ok(()),
             Err(e) => {
                 last_err = e.to_string();
@@ -161,17 +192,17 @@ async fn translate_one_stream(
     model: &str,
     entry_id: &str,
     source: &str,
+    matches: &[crate::glossary::MatchedTerm],
     on_event: &Channel<TranslationEvent>,
 ) -> Result<()> {
+    let user_prompt = build_user_prompt(source, matches);
     let body = serde_json::json!({
         "model": model,
         "stream": true,
         "temperature": 0.3,
         "messages": [
             { "role": "system", "content": SYSTEM_PROMPT },
-            { "role": "user", "content":
-                format!("请将以下文本翻译为简体中文，只输出译文，不要任何解释或前后缀：\n\n{source}")
-            }
+            { "role": "user", "content": user_prompt }
         ]
     });
 

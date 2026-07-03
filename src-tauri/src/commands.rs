@@ -7,6 +7,7 @@ use tauri::State;
 use crate::config;
 use crate::error::{AppError, Result};
 use crate::formats;
+use crate::glossary;
 use crate::pak;
 use crate::translation;
 use crate::types::{
@@ -105,7 +106,60 @@ pub async fn translate_entries(
         ));
     }
 
-    translation::translate_entries(&state.http, &settings, &entries, &on_event).await
+    // 加载术语表
+    let glossary = glossary::load()?;
+    translation::translate_entries(&state.http, &settings, &glossary, &entries, &on_event).await
+}
+
+// ── 术语表命令 ──
+
+/// 读取术语表。
+#[tauri::command]
+pub async fn list_glossary() -> Result<glossary::Glossary> {
+    let g = glossary::load()?;
+    Ok(g)
+}
+
+/// 新增术语。
+#[tauri::command]
+pub async fn add_glossary_entry(entry: glossary::GlossaryEntry) -> Result<glossary::Glossary> {
+    let mut g = glossary::load()?;
+    glossary::add(&mut g, entry)?;
+    glossary::save(&g)?;
+    Ok(g)
+}
+
+/// 更新术语。
+#[tauri::command]
+pub async fn update_glossary_entry(
+    old_source: String,
+    entry: glossary::GlossaryEntry,
+) -> Result<glossary::Glossary> {
+    let mut g = glossary::load()?;
+    glossary::update(&mut g, &old_source, entry)?;
+    glossary::save(&g)?;
+    Ok(g)
+}
+
+/// 删除术语。
+#[tauri::command]
+pub async fn delete_glossary_entry(source: String) -> Result<glossary::Glossary> {
+    let mut g = glossary::load()?;
+    glossary::delete(&mut g, &source)?;
+    glossary::save(&g)?;
+    Ok(g)
+}
+
+/// 重置术语表为官方种子。
+#[tauri::command]
+pub async fn reset_glossary() -> Result<glossary::Glossary> {
+    glossary::reset()
+}
+
+/// 导入术语表 JSON（从游戏提取的完整官方术语表）。
+#[tauri::command]
+pub async fn import_glossary(json_str: String) -> Result<glossary::Glossary> {
+    glossary::import_json(&json_str)
 }
 
 /// 保存 LLM 设置。

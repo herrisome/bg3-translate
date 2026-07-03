@@ -85,3 +85,23 @@ export interface ExtractResult {
 export interface BackendError {
   message: string;
 }
+
+// ── 术语表 ──
+
+/** 单条术语（与 Rust glossary::GlossaryEntry 字段一致） */
+export interface GlossaryEntry {
+  source: string;
+  target: string;
+  category: string;
+  sourceKind: string;
+  enabled: boolean;
+  ambiguous: boolean;
+  wholeWord: boolean;
+  caseSensitive: boolean;
+  count: number;
+}
+
+/** 整个术语表 */
+export interface Glossary {
+  terms: GlossaryEntry[];
+}

@@ -4,6 +4,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod formats;
+pub mod glossary;
 pub mod pak;
 pub mod translation;
 pub mod types;
@@ -31,6 +32,12 @@ pub fn run() {
             commands::translate_entries,
             commands::save_llm_settings,
             commands::load_llm_settings,
+            commands::list_glossary,
+            commands::add_glossary_entry,
+            commands::update_glossary_entry,
+            commands::delete_glossary_entry,
+            commands::reset_glossary,
+            commands::import_glossary,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用时出错");
