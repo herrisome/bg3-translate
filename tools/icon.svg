@@ -1,11 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
-    <!-- macOS squircle 形状（超椭圆近似，圆角半径 ~22%）-->
-    <clipPath id="squircle">
-      <path d="M 224 64 C 380 64 644 64 800 64 C 904 64 960 120 960 224 C 960 380 960 644 960 800 C 960 904 904 960 800 960 C 644 960 380 960 224 960 C 120 960 64 904 64 800 C 64 644 64 380 64 224 C 64 120 120 64 224 64 Z"/>
-    </clipPath>
     <!-- 背景径向渐变：深紫奇幻 -->
-    <radialGradient id="bgGrad" cx="50%" cy="35%" r="78%">
+    <radialGradient id="bgGrad" cx="50%" cy="35%" r="80%">
       <stop offset="0%" stop-color="#432a8c"/>
       <stop offset="50%" stop-color="#261a58"/>
       <stop offset="100%" stop-color="#0d091e"/>
@@ -46,24 +42,29 @@
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
+    <!-- macOS Big Sur 标准 squircle 蒙版（精确超椭圆，填满 1024 画布）-->
+    <clipPath id="mask">
+      <path d="M 293.579 0.619 C 209.946 0.619 148.983 2.077 104.474 9.684 C 59.963 17.291 31.886 31.017 17.451 45.451 C 3.017 59.886 0 88.01 0 171.643 L 0 852.357 C 0 935.99 3.017 964.114 17.451 978.549 C 31.886 992.983 59.963 1006.709 104.474 1014.316 C 148.983 1021.923 209.946 1023.381 293.579 1023.381 L 730.421 1023.381 C 814.054 1023.381 875.017 1021.923 919.526 1014.316 C 964.037 1006.709 992.114 992.983 1006.549 978.549 C 1020.983 964.114 1024 935.99 1024 852.357 L 1024 171.643 C 1024 88.01 1020.983 59.886 1006.549 45.451 C 992.114 31.017 964.037 17.291 919.526 9.684 C 875.017 2.077 814.054 0.619 730.421 0.619 Z"/>
+    </clipPath>
   </defs>
 
-  <g clip-path="url(#squircle)">
-    <!-- 背景 -->
-    <rect x="0" y="0" width="1024" height="1024" fill="url(#bgGrad)"/>
+  <!-- 用标准 squircle 蒙版裁剪整个图标内容 -->
+  <g clip-path="url(#mask)">
+    <!-- 背景：填满整个画布（确保蒙版边缘无白边）-->
+    <rect x="-10" y="-10" width="1044" height="1044" fill="url(#bgGrad)"/>
 
     <!-- 卡片（法术卡 / 卷轴）-->
     <g filter="url(#cardShadow)">
-      <rect x="220" y="220" width="584" height="584" rx="82" ry="82"
+      <rect x="232" y="232" width="560" height="560" rx="82" ry="82"
             fill="url(#cardGrad)" stroke="url(#goldGrad)" stroke-width="5"/>
     </g>
 
     <!-- 装饰角线（D&D 卷轴感，呼应 BG3 法术卡）-->
     <g stroke="#e8c364" stroke-width="4" fill="none" opacity="0.6" stroke-linecap="round">
-      <path d="M 260 260 L 320 260 M 260 260 L 260 320"/>
-      <path d="M 764 260 L 704 260 M 764 260 L 764 320"/>
-      <path d="M 260 764 L 320 764 M 260 764 L 260 704"/>
-      <path d="M 764 764 L 704 764 M 764 764 L 764 704"/>
+      <path d="M 272 272 L 332 272 M 272 272 L 272 332"/>
+      <path d="M 752 272 L 692 272 M 752 272 L 752 332"/>
+      <path d="M 272 752 L 332 752 M 272 752 L 272 692"/>
+      <path d="M 752 752 L 692 752 M 752 752 L 752 692"/>
     </g>
 
     <!-- 主符号组：A → 文 -->
@@ -71,7 +72,6 @@
       <!-- 左侧 "A" -->
       <g fill="none" stroke="url(#goldGrad)" stroke-width="38"
          stroke-linecap="round" stroke-linejoin="round">
-        <!-- A 主体：左斜 + 右斜 + 横 -->
         <path d="M 352 672 L 416 352 L 480 672"/>
         <path d="M 380 556 L 452 556"/>
       </g>
@@ -86,15 +86,10 @@
       <!-- 右侧 "文" -->
       <g stroke="url(#goldGrad)" stroke-width="36" stroke-linecap="round"
          stroke-linejoin="round" fill="none">
-        <!-- 顶部点 -->
         <path d="M 680 366 L 680 388"/>
-        <!-- 横 -->
         <path d="M 632 424 L 728 424"/>
-        <!-- 撇（从横中部偏左向左下）-->
         <path d="M 680 424 L 622 680"/>
-        <!-- 捺（从横中部向右下）-->
         <path d="M 680 424 L 738 680"/>
-        <!-- 中间竖交叉 -->
         <path d="M 680 424 L 680 610"/>
       </g>
     </g>
