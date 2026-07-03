@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- macOS squircle 形状（超椭圆近似，圆角半径 ~22%）-->
+    <clipPath id="squircle">
+      <path d="M 224 64 C 380 64 644 64 800 64 C 904 64 960 120 960 224 C 960 380 960 644 960 800 C 960 904 904 960 800 960 C 644 960 380 960 224 960 C 120 960 64 904 64 800 C 64 644 64 380 64 224 C 64 120 120 64 224 64 Z"/>
+    </clipPath>
+    <!-- 背景径向渐变：深紫奇幻 -->
+    <radialGradient id="bgGrad" cx="50%" cy="35%" r="78%">
+      <stop offset="0%" stop-color="#432a8c"/>
+      <stop offset="50%" stop-color="#261a58"/>
+      <stop offset="100%" stop-color="#0d091e"/>
+    </radialGradient>
+    <!-- 卡片渐变 -->
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#6b4cc4" stop-opacity="0.42"/>
+      <stop offset="100%" stop-color="#281d5c" stop-opacity="0.6"/>
+    </linearGradient>
+    <!-- 金色渐变（符号主色）-->
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffe89a"/>
+      <stop offset="50%" stop-color="#ebc468"/>
+      <stop offset="100%" stop-color="#c89232"/>
+    </linearGradient>
+    <!-- 金色亮（箭头）-->
+    <linearGradient id="goldBright" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#fff2b8"/>
+      <stop offset="100%" stop-color="#ecc870"/>
+    </linearGradient>
+    <!-- 卡片阴影 -->
+    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="12"/>
+      <feOffset dx="0" dy="10" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.45"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <!-- 符号微光 -->
+    <filter id="symGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g clip-path="url(#squircle)">
+    <!-- 背景 -->
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#bgGrad)"/>
+
+    <!-- 卡片（法术卡 / 卷轴）-->
+    <g filter="url(#cardShadow)">
+      <rect x="220" y="220" width="584" height="584" rx="82" ry="82"
+            fill="url(#cardGrad)" stroke="url(#goldGrad)" stroke-width="5"/>
+    </g>
+
+    <!-- 装饰角线（D&D 卷轴感，呼应 BG3 法术卡）-->
+    <g stroke="#e8c364" stroke-width="4" fill="none" opacity="0.6" stroke-linecap="round">
+      <path d="M 260 260 L 320 260 M 260 260 L 260 320"/>
+      <path d="M 764 260 L 704 260 M 764 260 L 764 320"/>
+      <path d="M 260 764 L 320 764 M 260 764 L 260 704"/>
+      <path d="M 764 764 L 704 764 M 764 764 L 764 704"/>
+    </g>
+
+    <!-- 主符号组：A → 文 -->
+    <g filter="url(#symGlow)">
+      <!-- 左侧 "A" -->
+      <g fill="none" stroke="url(#goldGrad)" stroke-width="38"
+         stroke-linecap="round" stroke-linejoin="round">
+        <!-- A 主体：左斜 + 右斜 + 横 -->
+        <path d="M 352 672 L 416 352 L 480 672"/>
+        <path d="M 380 556 L 452 556"/>
+      </g>
+
+      <!-- 中间箭头 -->
+      <g stroke="url(#goldBright)" stroke-width="28" stroke-linecap="round"
+         stroke-linejoin="round" fill="none">
+        <path d="M 522 512 L 592 512"/>
+        <path d="M 568 486 L 596 512 L 568 538"/>
+      </g>
+
+      <!-- 右侧 "文" -->
+      <g stroke="url(#goldGrad)" stroke-width="36" stroke-linecap="round"
+         stroke-linejoin="round" fill="none">
+        <!-- 顶部点 -->
+        <path d="M 680 366 L 680 388"/>
+        <!-- 横 -->
+        <path d="M 632 424 L 728 424"/>
+        <!-- 撇（从横中部偏左向左下）-->
+        <path d="M 680 424 L 622 680"/>
+        <!-- 捺（从横中部向右下）-->
+        <path d="M 680 424 L 738 680"/>
+        <!-- 中间竖交叉 -->
+        <path d="M 680 424 L 680 610"/>
+      </g>
+    </g>
+  </g>
+</svg>
