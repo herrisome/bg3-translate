@@ -22,18 +22,20 @@ fn import_then_match_works() {
     println!("enabled: {enabled}");
 
     // 测试 MOD 的真实文本 + 一些一定命中的术语
+    // 注意：用 import_json 清洗后的数据测试（这才是实际翻译时用的）
+    let cleaned = import_json(&json).expect("import_json 应成功");
     let cases = [
-        ("Appearance Editing", true),
-        ("Call upon the powers of the Magic Mirror from afar.", true),
-        ("Draw upon the powers of the Forgotten One.", true),
-        ("Baldur's Gate", true),
-        ("The Paladin attacks.", true),
-        ("A goblin camp.", true),
+        "Appearance Editing",
+        "Call upon the powers of the Magic Mirror from afar.",
+        "Draw upon the powers of the Forgotten One.",
+        "Baldur's Gate",
+        "The Paladin attacks.",
+        "A goblin camp.",
     ];
 
     let mut any_hit = false;
-    for (text, expect_hit) in &cases {
-        let m = find_matches(text, &glossary);
+    for text in &cases {
+        let m = find_matches(text, &cleaned);
         if m.is_empty() {
             println!("❌ 未命中: {text}");
         } else {
@@ -46,8 +48,32 @@ fn import_then_match_works() {
     }
     assert!(any_hit, "应至少有一条命中");
 
-    // 验证 import_json（与直接反序列化结果一致）
+    // 关键验证：清洗后不应再误匹配 from/OF/One 等噪音词
+    let noise_check = find_matches("Draw upon the powers of the Forgotten One.", &cleaned);
+    let noise_sources: Vec<_> = noise_check.iter().map(|m| m.source.as_str()).collect();
+    assert!(
+        !noise_sources.contains(&"from"),
+        "清洗后不应再匹配 'from'"
+    );
+    assert!(
+        !noise_sources.iter().any(|s| s.eq_ignore_ascii_case("of")),
+        "清洗后不应再匹配 'OF'"
+    );
+    assert!(
+        !noise_sources.contains(&"One"),
+        "清洗后不应再匹配 'One'"
+    );
+    println!("✅ 噪音词（from/OF/One）已清除");
+
+    // 验证 import_json 清洗后条目数（应少于原始，因过滤了噪音）
     let imported = import_json(&json).expect("import_json 应成功");
-    assert_eq!(imported.terms.len(), glossary.terms.len());
-    println!("✅ import_json 正常，返回 {} 条", imported.terms.len());
+    assert!(
+        imported.terms.len() < glossary.terms.len(),
+        "清洗后应少于原始条目数"
+    );
+    println!(
+        "✅ import_json 正常：原始 {}，清洗后 {}",
+        glossary.terms.len(),
+        imported.terms.len()
+    );
 }

@@ -133,13 +133,104 @@ pub fn reset() -> Result<Glossary> {
     Ok(g)
 }
 
-/// 从 JSON 字符串导入术语（合并到现有术语表，相同 source 覆盖）。
-/// 用于加载用户提供的完整官方术语表文件。
+/// 从 JSON 字符串导入术语，导入时自动清洗：
+/// - 过滤噪音条目（占位符模板、UI 按键标记、破折号破碎文本、常见短词）
+/// - 去除 source/target 两端的引号、括号、破折号等标点
 pub fn import_json(json_str: &str) -> Result<Glossary> {
     let imported: Glossary = serde_json::from_str(json_str)
         .map_err(|e| AppError::Config(format!("术语表 JSON 解析失败: {e}")))?;
-    save(&imported)?;
-    Ok(imported)
+
+    let mut cleaned = Glossary { terms: Vec::new() };
+    let mut removed = 0usize;
+    for mut entry in imported.terms {
+        if let Some(e) = clean_entry(&mut entry) {
+            cleaned.terms.push(e);
+        } else {
+            removed += 1;
+        }
+    }
+    log::info!(
+        "术语表导入清洗：{} 条保留，{} 条噪音过滤",
+        cleaned.terms.len(),
+        removed
+    );
+    save(&cleaned)?;
+    Ok(cleaned)
+}
+
+/// 清洗单条术语。返回 None 表示应过滤掉（噪音）。
+fn clean_entry(entry: &mut GlossaryEntry) -> Option<GlossaryEntry> {
+    use regex::Regex;
+    let source = entry.source.trim();
+    let target = entry.target.trim();
+
+    // 空值过滤
+    if source.is_empty() || target.is_empty() {
+        return None;
+    }
+
+    // ── 噪音过滤（这些不是术语，是从本地化文件机械提取的碎片）──
+
+    // 占位符模板（[1] from [2]、+[1] Damage 这种句式模板）
+    if Regex::new(r"\[\d+\]").unwrap().is_match(source) {
+        return None;
+    }
+    // UI 按键标记（[IE_xxx]、[DRUID] 这种内部 ID）
+    if source.contains("[IE_")
+        || Regex::new(r"^\[[A-Z_]{2,}\]").unwrap().is_match(source)
+    {
+        return None;
+    }
+    // 破折号破碎文本（-- come ----、---OBEY--- 这种）
+    if source.matches('-').count() >= 2 {
+        let words: Vec<&str> = source.split_whitespace().collect();
+        let non_dash_words = words
+            .iter()
+            .filter(|w| !w.chars().all(|c| c == '-'))
+            .count();
+        if non_dash_words <= 2 {
+            return None;
+        }
+    }
+    // 纯符号/标点
+    if Regex::new(r"^[\W_]+$").unwrap().is_match(source) {
+        return None;
+    }
+    // 过短的常见英文词（of/and/the 等会误匹配正常文本）
+    // 覆盖大小写变体（OF/Of/of 都要过滤）
+    let common_short = [
+        "of", "and", "the", "or", "for", "to", "in", "on", "at", "by", "is", "it", "as",
+        "be", "do", "no", "if", "an", "my", "we", "he", "up", "so", "tag", "end", "yes",
+        "die", "one", "two", "from", "upon", "with", "that", "this", "then", "than",
+        "but", "not", "all", "any", "can", "may", "has", "had", "was", "are", "were",
+        "let", "set", "get", "put", "out", "off", "own", "new", "old", "big", "low",
+    ];
+    let lower = source.to_lowercase();
+    if source.len() <= 4 && common_short.contains(&lower.as_str()) {
+        return None;
+    }
+
+    // ── 标点清理（保留条目，但去除两端多余标点）──
+    // 去除两端的引号 ' " （常见于游戏内的标题/书名）
+    let trimmed_source = trim_quotes(source);
+    let trimmed_target = trim_quotes(target);
+
+    // 清理后再检查是否变空
+    if trimmed_source.is_empty() || trimmed_target.is_empty() {
+        return None;
+    }
+
+    entry.source = trimmed_source;
+    entry.target = trimmed_target;
+    Some(entry.clone())
+}
+
+/// 去除字符串两端的引号和包裹性标点（' " 「 」 『 』）。
+fn trim_quotes(s: &str) -> String {
+    let mut result = s.trim_matches(|c| c == '\'' || c == '"' || c == '「' || c == '」' || c == '『' || c == '』');
+    // 再 trim 一次空白（去掉引号后可能暴露的空格）
+    result = result.trim();
+    result.to_string()
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -463,5 +554,104 @@ mod tests {
         assert_eq!(g.terms.len(), 1);
         assert_eq!(g.terms[0].target, "火球术");
         assert_eq!(g.terms[0].count, 5);
+    }
+
+    #[test]
+    fn clean_removes_placeholder_templates() {
+        // 占位符模板应被过滤
+        let json = r#"{"terms":[
+            {"source":"[1] from [2]","target":"从[2]处取走[1]","category":"name_or_title","source_kind":"official","enabled":true,"ambiguous":false,"whole_word":true,"case_sensitive":false,"count":1},
+            {"source":"Baldur's Gate","target":"博德之门","category":"location","source_kind":"official","enabled":true,"ambiguous":false,"whole_word":true,"case_sensitive":false,"count":10}
+        ]}"#;
+        let g = import_json(json).unwrap();
+        assert_eq!(g.terms.len(), 1, "占位符模板应被过滤");
+        assert_eq!(g.terms[0].source, "Baldur's Gate");
+    }
+
+    #[test]
+    fn clean_removes_ui_markers() {
+        let json = r#"{"terms":[
+            {"source":"[IE_ContextMenu] Ping","target":"[IE_ContextMenu]标记","category":"name_or_title","source_kind":"official","enabled":true,"ambiguous":false,"whole_word":true,"case_sensitive":false,"count":1},
+            {"source":"[DRUID][RANGER]","target":"[德鲁伊][游侠]","category":"name_or_title","source_kind":"official","enabled":true,"ambiguous":false,"whole_word":true,"case_sensitive":false,"count":1}
+        ]}"#;
+        let g = import_json(json).unwrap();
+        assert_eq!(g.terms.len(), 0, "UI 标记应被过滤");
+    }
+
+    #[test]
+    fn clean_removes_dash_fragments() {
+        let json = r#"{"terms":[
+            {"source":"--OBEY--","target":"--服从--","category":"name_or_title","source_kind":"official","enabled":true,"ambiguous":false,"whole_word":true,"case_sensitive":false,"count":1},
+            {"source":"---COME---obey- --yield---","target":"---来吧---服从","category":"short_phrase","source_kind":"official","enabled":true,"ambiguous":false,"whole_word":true,"case_sensitive":false,"count":1}
+        ]}"#;
+        let g = import_json(json).unwrap();
+        assert_eq!(g.terms.len(), 0, "破折号破碎文本应被过滤");
+    }
+
+    #[test]
+    fn clean_removes_common_short_words() {
+        let json = r#"{"terms":[
+            {"source":"of","target":"之","category":"name_or_title","source_kind":"official","enabled":true,"ambiguous":false,"whole_word":true,"case_sensitive":false,"count":1},
+            {"source":"the","target":"这","category":"name_or_title","source_kind":"official","enabled":true,"ambiguous":false,"whole_word":true,"case_sensitive":false,"count":1},
+            {"source":"Paladin","target":"圣武士","category":"class","source_kind":"official","enabled":true,"ambiguous":false,"whole_word":true,"case_sensitive":false,"count":5}
+        ]}"#;
+        let g = import_json(json).unwrap();
+        assert_eq!(g.terms.len(), 1, "常见短词应被过滤");
+        assert_eq!(g.terms[0].source, "Paladin");
+    }
+
+    #[test]
+    fn clean_strips_quotes() {
+        // 带引号的标题：去掉引号后保留
+        let json = r#"{"terms":[
+            {"source":"'Barnabus'","target":"\"巴那布斯\"","category":"name_or_title","source_kind":"official","enabled":true,"ambiguous":false,"whole_word":true,"case_sensitive":false,"count":1}
+        ]}"#;
+        let g = import_json(json).unwrap();
+        assert_eq!(g.terms.len(), 1);
+        assert_eq!(g.terms[0].source, "Barnabus", "source 引号应被去除");
+        assert_eq!(g.terms[0].target, "巴那布斯", "target 引号应被去除");
+    }
+
+    #[test]
+    fn clean_real_20k_glossary() {
+        // 用真实术语表验证清洗效果
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("samples/bg3-official-glossary.json");
+        if !path.exists() {
+            eprintln!("跳过：未找到真实术语表");
+            return;
+        }
+        let json = std::fs::read_to_string(&path).unwrap();
+        let raw: Glossary = serde_json::from_str(&json).unwrap();
+        let raw_count = raw.terms.len();
+
+        let cleaned = import_json(&json).unwrap();
+        println!("原始: {raw_count}，清洗后: {}", cleaned.terms.len());
+
+        // 应过滤掉一部分噪音（约 1-3%）
+        assert!(cleaned.terms.len() < raw_count, "应过滤掉部分噪音");
+        assert!(cleaned.terms.len() > 15000, "应保留绝大多数有效术语");
+
+        // 验证过滤后没有占位符模板
+        assert!(
+            !cleaned.terms.iter().any(|t| t.source.contains("[1]")),
+            "不应残留占位符模板"
+        );
+        // 验证没有 UI 标记
+        assert!(
+            !cleaned.terms.iter().any(|t| t.source.contains("[IE_")),
+            "不应残留 UI 标记"
+        );
+        // 验证没有引号包裹的 source
+        assert!(
+            !cleaned
+                .terms
+                .iter()
+                .any(|t| t.source.starts_with('\'') || t.source.starts_with('"')),
+            "不应残留引号包裹的 source"
+        );
+        println!("✅ 真实术语表清洗验证通过");
     }
 }
