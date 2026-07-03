@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { readTextFile } from "@tauri-apps/plugin-fs";
 import {
   Check,
   Edit3,
@@ -150,25 +152,25 @@ export function GlossaryPanel({ onClose }: { onClose: () => void }) {
   };
 
   const onImport = async () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".json";
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      setError(null);
-      setLoading(true);
-      try {
-        const text = await file.text();
-        const g = await importGlossary(text);
-        setGlossary(g);
-      } catch (e) {
-        setError(String(e));
-      } finally {
-        setLoading(false);
-      }
-    };
-    input.click();
+    // 用 Tauri 原生对话框（浏览器 <input> 在 Tauri 沙箱里读不到真实文件内容）
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: "术语表 JSON", extensions: ["json"] }],
+    });
+    const filePath = typeof selected === "string" ? selected : null;
+    if (!filePath) return;
+
+    setError(null);
+    setLoading(true);
+    try {
+      const text = await readTextFile(filePath);
+      const g = await importGlossary(text);
+      setGlossary(g);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const startEdit = (entry: GlossaryEntry) => {
