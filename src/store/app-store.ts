@@ -29,6 +29,8 @@ interface AppState {
 
   // ── 翻译条目（按文件缓存）──
   entriesByFile: EntriesByFile;
+  /** entryId → fileName 反查索引，加速 delta 高频更新 */
+  entryIdToFile: Record<string, string>;
   /** 当前正在翻译的条目 id 集合 */
   translatingIds: Set<string>;
 
@@ -65,7 +67,7 @@ const DEFAULT_SETTINGS: LlmSettings = {
   baseUrl: "https://api.deepseek.com",
   apiKey: "",
   model: "deepseek-chat",
-  concurrency: 4,
+  concurrency: 6,
   batchSize: 10,
 };
 
@@ -77,6 +79,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedFiles: [],
   loadedFileNames: new Set(),
   entriesByFile: {},
+  entryIdToFile: {},
   translatingIds: new Set(),
   settings: DEFAULT_SETTINGS,
   settingsLoaded: false,
@@ -93,48 +96,53 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedFiles: [],
       loadedFileNames: new Set(),
       entriesByFile: {},
+      entryIdToFile: {},
       error: null,
     }),
   setSelectedFiles: (files) => set({ selectedFiles: files }),
   setFileEntries: (fileName, entries) =>
-    set((s) => ({
-      entriesByFile: { ...s.entriesByFile, [fileName]: entries },
-      loadedFileNames: new Set([...s.loadedFileNames, fileName]),
-    })),
+    set((s) => {
+      // 建立 entryId → fileName 反查索引，避免 delta 高频更新时遍历所有条目
+      const entryIdToFile = { ...s.entryIdToFile };
+      for (const e of entries) entryIdToFile[e.id] = fileName;
+      return {
+        entriesByFile: { ...s.entriesByFile, [fileName]: entries },
+        loadedFileNames: new Set([...s.loadedFileNames, fileName]),
+        entryIdToFile,
+      };
+    }),
   updateEntry: (id, patch) =>
     set((s) => {
-      const entriesByFile = { ...s.entriesByFile };
-      for (const fileName of Object.keys(entriesByFile)) {
-        const list = entriesByFile[fileName];
-        const idx = list.findIndex((e) => e.id === id);
-        if (idx >= 0) {
-          const updated = [...list];
-          updated[idx] = { ...updated[idx], ...patch };
-          entriesByFile[fileName] = updated;
-          break;
-        }
-      }
-      return { entriesByFile };
+      const fileName = s.entryIdToFile[id];
+      if (!fileName) return s;
+      const list = s.entriesByFile[fileName];
+      if (!list) return s;
+      const idx = list.findIndex((e) => e.id === id);
+      if (idx < 0) return s;
+      const updated = [...list];
+      updated[idx] = { ...updated[idx], ...patch };
+      return {
+        entriesByFile: { ...s.entriesByFile, [fileName]: updated },
+      };
     }),
   setEntryStatus: (id, status) => get().updateEntry(id, { status }),
   appendDelta: (id, delta) =>
     set((s) => {
-      const entriesByFile = { ...s.entriesByFile };
-      for (const fileName of Object.keys(entriesByFile)) {
-        const list = entriesByFile[fileName];
-        const idx = list.findIndex((e) => e.id === id);
-        if (idx >= 0) {
-          const updated = [...list];
-          updated[idx] = {
-            ...updated[idx],
-            target: updated[idx].target + delta,
-            status: "translating",
-          };
-          entriesByFile[fileName] = updated;
-          break;
-        }
-      }
-      return { entriesByFile };
+      const fileName = s.entryIdToFile[id];
+      if (!fileName) return s;
+      const list = s.entriesByFile[fileName];
+      if (!list) return s;
+      const idx = list.findIndex((e) => e.id === id);
+      if (idx < 0) return s;
+      const updated = [...list];
+      updated[idx] = {
+        ...updated[idx],
+        target: updated[idx].target + delta,
+        status: "translating",
+      };
+      return {
+        entriesByFile: { ...s.entriesByFile, [fileName]: updated },
+      };
     }),
   getAllEntries: () => {
     const { selectedFiles, entriesByFile } = get();
@@ -158,6 +166,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedFiles: [],
       loadedFileNames: new Set(),
       entriesByFile: {},
+      entryIdToFile: {},
       translatingIds: new Set(),
       error: null,
     }),

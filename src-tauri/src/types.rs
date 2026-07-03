@@ -111,7 +111,7 @@ fn default_model() -> String {
     "deepseek-chat".into()
 }
 fn default_concurrency() -> usize {
-    4
+    6
 }
 fn default_batch_size() -> usize {
     10

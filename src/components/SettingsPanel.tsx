@@ -89,33 +89,21 @@ export function SettingsPanel({ compact = false }: { compact?: boolean }) {
             onChange={(e) => setForm({ ...form, model: e.target.value })}
           />
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="concurrency">并发数</Label>
-            <Input
-              id="concurrency"
-              type="number"
-              min={1}
-              max={10}
-              value={form.concurrency}
-              onChange={(e) =>
-                setForm({ ...form, concurrency: Number(e.target.value) })
-              }
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="batchSize">每批条目数</Label>
-            <Input
-              id="batchSize"
-              type="number"
-              min={1}
-              max={50}
-              value={form.batchSize}
-              onChange={(e) =>
-                setForm({ ...form, batchSize: Number(e.target.value) })
-              }
-            />
-          </div>
+        <div className="space-y-2">
+          <Label htmlFor="concurrency">并发数（同时翻译的条目数）</Label>
+          <Input
+            id="concurrency"
+            type="number"
+            min={1}
+            max={16}
+            value={form.concurrency}
+            onChange={(e) =>
+              setForm({ ...form, concurrency: Number(e.target.value) })
+            }
+          />
+          <p className="text-xs text-muted-foreground">
+            数值越大翻译越快，但会增加 API 并发请求量。建议 4-8。
+          </p>
         </div>
         <Button onClick={onSave} disabled={saving} className="w-full">
           {saving ? (

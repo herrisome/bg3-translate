@@ -1,17 +1,17 @@
-//! LLM 翻译引擎：reqwest + 手动 SSE 解析 + 批量并发。
+//! LLM 翻译引擎：reqwest + 手动 SSE 解析 + 逐条流式并发。
 //!
-//! 架构（详见阶段调研报告）：
-//! - 每批 N 条打包成 JSON 数组发给 LLM，要求返回同结构同顺序的 JSON 数组
-//! - 用 id 对齐，避免模型乱序导致映射错乱
-//! - Semaphore 控制并发，指数退避重试
-//! - 流式 token 通过 Tauri Channel 实时推送到前端
+//! 架构（优化后）：
+//! - 每条单独请求、单独流式，token 实时通过 Channel 推送到对应条目
+//! - 用 Semaphore 控制并发数（默认 concurrency 条同时翻译）
+//! - 指数退避重试（每条独立，失败不影响其他条目）
+//! - 丢弃旧的"批量 JSON 聚合"模式——它要求模型生成完整 JSON 数组才能解析，
+//!   导致整批 N 条要全部生成完才有反馈，体验很差
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tokio::sync::Semaphore;
 
@@ -19,11 +19,6 @@ use crate::error::{AppError, Result};
 use crate::types::{LlmSettings, TranslationEntry, TranslationEvent, TranslationStatus};
 
 /// D&D / BG3 世界观语境的系统 prompt。
-///
-/// 关键约束：
-/// 1. 保留富文本标签（<LSTag>、<font>、<i> 等）和占位符（{1}、{2}）的数量与位置
-/// 2. 术语符合 D&D 5e 与 BG3 官方译名（费伦大陆、被遗忘的国度）
-/// 3. 只输出译文，不加解释
 pub const SYSTEM_PROMPT: &str = r#"你是一位精通《龙与地下城》第五版（D&D 5e）和《博德之门3》（Baldur's Gate 3）的专业游戏本地化译者，正在将游戏 MOD 文本从英文翻译为简体中文。
 
 请严格遵守以下规则：
@@ -38,30 +33,13 @@ pub const SYSTEM_PROMPT: &str = r#"你是一位精通《龙与地下城》第五
 
 5. **专有名词**：BG3 已有官方译名的角色、地点、物品优先用官方译法（如 "Baldur's Gate"=博德之门、"Avernus"=阿佛纳斯、"Mind Flayer"=夺心魔、"Tadpole"=蝌蚪）。
 
-6. **只输出译文**：不要添加注释、解释、引号或前后缀。
+6. **只输出译文**：不要添加注释、解释、引号或前后缀。"#;
 
-如果输入是 JSON 数组格式，请输出相同结构、相同 id、相同顺序的 JSON 数组，不要用 ```json 代码块包裹。"#;
-
-/// 单条翻译的请求/响应负载（JSON 数组中的元素）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TranslateItem {
-    id: String,
-    text: String,
-}
-
-/// 单次批量调用的结果。
-struct BatchResult {
-    /// id -> 译文
-    translations: std::collections::HashMap<String, String>,
-    /// 失败的 id 及原因
-    failed: std::collections::HashMap<String, String>,
-}
-
-/// 批量流式翻译入口。
+/// 批量流式翻译入口：逐条并发流式翻译。
 ///
 /// - 只翻译 source 非空且 target 为空的条目（已翻译/已编辑的跳过）
-/// - 按设置分组、并发执行
-/// - 通过 channel 实时推送进度
+/// - 用 Semaphore 控制并发数（同时 N 条在翻译）
+/// - 通过 channel 实时推送每条的 start / delta / done / error
 pub async fn translate_entries(
     client: &Client,
     settings: &LlmSettings,
@@ -83,31 +61,8 @@ pub async fn translate_entries(
     }
 
     let total = to_translate.len();
-    let batch_size = settings.batch_size.max(1);
-    let concurrency = settings.concurrency.clamp(1, 10);
+    let concurrency = settings.concurrency.clamp(1, 16);
     let semaphore = Arc::new(Semaphore::new(concurrency));
-
-    // 分组
-    let batches: Vec<Vec<TranslateItem>> = to_translate
-        .chunks(batch_size)
-        .map(|chunk| {
-            chunk
-                .iter()
-                .map(|e| TranslateItem {
-                    id: e.id.clone(),
-                    text: e.source.clone(),
-                })
-                .collect()
-        })
-        .collect();
-
-    // 标记全部为 translating
-    for item in &to_translate {
-        let _ = on_event.send(TranslationEvent::Progress {
-            entry_id: item.id.clone(),
-            status: TranslationStatus::Translating,
-        });
-    }
 
     let url = format!(
         "{}/v1/chat/completions",
@@ -116,8 +71,9 @@ pub async fn translate_entries(
     let api_key = settings.api_key.clone();
     let model = settings.model.clone();
 
+    // 为每条创建独立的并发任务
     let mut tasks = Vec::new();
-    for batch in batches {
+    for entry in to_translate {
         let permit = semaphore
             .clone()
             .acquire_owned()
@@ -128,38 +84,27 @@ pub async fn translate_entries(
         let api_key = api_key.clone();
         let model = model.clone();
         let channel = on_event.clone();
+        let entry_id = entry.id.clone();
+        let source = entry.source.clone();
         tasks.push(tokio::spawn(async move {
-            let _permit = permit; // 持有 permit 直到完成
-            translate_batch_with_retry(&client, &url, &api_key, &model, batch, &channel).await
+            let _permit = permit; // 持有 permit 直到本条完成
+            translate_one_with_retry(&client, &url, &api_key, &model, &entry_id, &source, &channel)
+                .await
         }));
     }
 
-    // 等待全部完成
+    // 等待全部完成，统计失败数
     let mut failed_total = 0usize;
     for task in tasks {
         match task.await {
-            Ok(Ok(result)) => {
-                for (id, text) in result.translations {
-                    let _ = on_event.send(TranslationEvent::Done {
-                        entry_id: id,
-                        text,
-                    });
-                }
-                for (id, msg) in result.failed {
-                    failed_total += 1;
-                    let _ = on_event.send(TranslationEvent::Error {
-                        entry_id: id,
-                        message: msg,
-                    });
-                }
-            }
+            Ok(Ok(_)) => {}
             Ok(Err(e)) => {
-                log::error!("批量任务失败: {e}");
                 failed_total += 1;
+                log::error!("翻译任务失败: {e}");
             }
             Err(e) => {
-                log::error!("任务 panic: {e}");
                 failed_total += 1;
+                log::error!("任务 panic: {e}");
             }
         }
     }
@@ -171,32 +116,23 @@ pub async fn translate_entries(
     Ok(())
 }
 
-/// 单批翻译，带指数退避重试（最多 3 次）。
-///
-/// 当批次只有 1 条时走单条流式路径（delta 实时对应到条目，前端体验最佳）；
-/// 多条时走批量 JSON 聚合路径（保上下文一致性，但无逐条流式）。
-async fn translate_batch_with_retry(
+/// 单条翻译，带指数退避重试（最多 3 次）。
+async fn translate_one_with_retry(
     client: &Client,
     url: &str,
     api_key: &str,
     model: &str,
-    batch: Vec<TranslateItem>,
+    entry_id: &str,
+    source: &str,
     on_event: &Channel<TranslationEvent>,
-) -> Result<BatchResult> {
+) -> Result<()> {
     let mut last_err = String::new();
     for attempt in 1..=3u32 {
-        let result = if batch.len() == 1 {
-            // 单条流式：delta 实时推送到该条目
-            translate_single_stream(client, url, api_key, model, &batch[0], on_event)
-                .await
-        } else {
-            translate_batch_once(client, url, api_key, model, &batch, on_event).await
-        };
-        match result {
-            Ok(r) => return Ok(r),
+        match translate_one_stream(client, url, api_key, model, entry_id, source, on_event).await {
+            Ok(()) => return Ok(()),
             Err(e) => {
                 last_err = e.to_string();
-                log::warn!("第 {attempt} 次尝试失败: {last_err}");
+                log::warn!("[{entry_id}] 第 {attempt} 次尝试失败: {last_err}");
                 if attempt < 3 {
                     let backoff = Duration::from_millis(500 * 2u64.pow(attempt - 1));
                     tokio::time::sleep(backoff).await;
@@ -204,27 +140,29 @@ async fn translate_batch_with_retry(
             }
         }
     }
-    // 全部失败：整批标记错误
-    let mut failed = std::collections::HashMap::new();
-    for item in &batch {
-        failed.insert(item.id.clone(), last_err.clone());
-    }
-    Ok(BatchResult {
-        translations: std::collections::HashMap::new(),
-        failed,
-    })
+    // 全部失败
+    let _ = on_event.send(TranslationEvent::Error {
+        entry_id: entry_id.to_string(),
+        message: last_err,
+    });
+    Ok(())
 }
 
 /// 单条流式翻译：每个 token 通过 Delta 事件实时推送到前端对应条目。
-/// 这是用户体验最好的模式（batch_size=1 时启用）。
-async fn translate_single_stream(
+///
+/// 这是唯一翻译路径——逐条独立请求，确保：
+/// 1. 每条都流式显示，前端即时反馈
+/// 2. 单条失败不影响其他条目
+/// 3. Semaphore 控制实际并发吞吐
+async fn translate_one_stream(
     client: &Client,
     url: &str,
     api_key: &str,
     model: &str,
-    item: &TranslateItem,
+    entry_id: &str,
+    source: &str,
     on_event: &Channel<TranslationEvent>,
-) -> Result<BatchResult> {
+) -> Result<()> {
     let body = serde_json::json!({
         "model": model,
         "stream": true,
@@ -232,7 +170,7 @@ async fn translate_single_stream(
         "messages": [
             { "role": "system", "content": SYSTEM_PROMPT },
             { "role": "user", "content":
-                format!("请将以下文本翻译为简体中文，只输出译文，不要解释：\n\n{}", item.text)
+                format!("请将以下文本翻译为简体中文，只输出译文，不要任何解释或前后缀：\n\n{source}")
             }
         ]
     });
@@ -241,7 +179,7 @@ async fn translate_single_stream(
         .post(url)
         .bearer_auth(api_key)
         .json(&body)
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(60))
         .send()
         .await
         .map_err(|e| AppError::Llm(format!("请求失败: {e}")))?;
@@ -258,7 +196,6 @@ async fn translate_single_stream(
     let mut stream = resp.bytes_stream();
     let mut buf = String::new();
     let mut full = String::new();
-    let mut translations = std::collections::HashMap::new();
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| AppError::Llm(format!("流读取失败: {e}")))?;
@@ -284,8 +221,9 @@ async fn translate_single_stream(
                 .and_then(|c| c.delta.content)
             {
                 if !delta.is_empty() {
+                    // 实时推送每个 token 到前端对应条目
                     let _ = on_event.send(TranslationEvent::Delta {
-                        entry_id: item.id.clone(),
+                        entry_id: entry_id.to_string(),
                         text: delta.clone(),
                     });
                     full.push_str(&delta);
@@ -294,151 +232,31 @@ async fn translate_single_stream(
         }
     }
 
-    translations.insert(item.id.clone(), full);
-    Ok(BatchResult {
-        translations,
-        failed: std::collections::HashMap::new(),
-    })
-}
-
-/// 单批单次调用。
-///
-/// 由于 LLM 被要求输出 JSON 数组（必须完整才能解析），流式 token 无法直接
-/// 映射到具体条目。策略：
-/// - 实时把 token 聚合到 full 字符串
-/// - 同时把每个 token 作为"实时增量"推给本批第一个条目（让前端进度条动起来）
-/// - 流结束后从 full 解析出 JSON 数组，按 id 分发真实结果，并清除占位 delta
-async fn translate_batch_once(
-    client: &Client,
-    url: &str,
-    api_key: &str,
-    model: &str,
-    batch: &[TranslateItem],
-    on_event: &Channel<TranslationEvent>,
-) -> Result<BatchResult> {
-    let _ = on_event; // 批量 JSON 模式下增量无法按 id 分发，仅用聚合结果
-    let user_content = serde_json::to_string(batch)
-        .map_err(|e| AppError::Llm(format!("序列化失败: {e}")))?;
-
-    let body = serde_json::json!({
-        "model": model,
-        "stream": true,
-        "temperature": 0.3,
-        "messages": [
-            { "role": "system", "content": SYSTEM_PROMPT },
-            { "role": "user", "content":
-                format!("请将以下 JSON 数组中的每条 text 翻译为简体中文，保持 id 和数组结构不变，只输出 JSON 数组：\n\n{user_content}")
-            }
-        ]
+    // 推送最终完整译文（前端会用它覆盖 delta 累积的结果，确保准确）
+    let final_text = full.trim().to_string();
+    let _ = on_event.send(TranslationEvent::Done {
+        entry_id: entry_id.to_string(),
+        text: final_text,
     });
-
-    let resp = client
-        .post(url)
-        .bearer_auth(api_key)
-        .json(&body)
-        .timeout(Duration::from_secs(120))
-        .send()
-        .await
-        .map_err(|e| AppError::Llm(format!("请求失败: {e}")))?;
-
-    let status = resp.status();
-    if !status.is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        return Err(AppError::Llm(format!(
-            "API 返回 {status}: {}",
-            &text[..text.len().min(500)]
-        )));
-    }
-
-    // ── 流式聚合 ──
-    // 期望的 id 映射，用于最后按 id 分发
-    let mut translations = std::collections::HashMap::new();
-    let mut failed = std::collections::HashMap::new();
-
-    let mut stream = resp.bytes_stream();
-    let mut buf = String::new();
-    let mut full = String::new();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| AppError::Llm(format!("流读取失败: {e}")))?;
-        buf.push_str(&String::from_utf8_lossy(&chunk));
-
-        // 按行切出完整 SSE event（每行一条 data:）
-        while let Some(pos) = buf.find('\n') {
-            let line: String = buf.drain(..=pos).collect();
-            let line = line.trim_end_matches(['\r', '\n']);
-            let Some(data) = line.strip_prefix("data: ") else {
-                continue;
-            };
-            let data = data.trim();
-            if data == "[DONE]" {
-                continue;
-            }
-            let Ok(parsed) = serde_json::from_str::<ChatChunk>(data) else {
-                continue;
-            };
-            if let Some(delta) = parsed
-                .choices
-                .into_iter()
-                .next()
-                .and_then(|c| c.delta.content)
-            {
-                full.push_str(&delta);
-            }
-        }
-    }
-
-    // ── 解析完整 JSON 数组 ──
-    // 模型有时会包裹 ```json ... ```，剥离
-    let json_str = strip_code_fence(&full);
-    match serde_json::from_str::<Vec<TranslateItem>>(json_str) {
-        Ok(items) => {
-            for item in items {
-                translations.insert(item.id, item.text);
-            }
-            // 校验：本批每个 id 都应出现
-            for b in batch {
-                if !translations.contains_key(&b.id) {
-                    failed.insert(b.id.clone(), "模型未返回该条目".into());
-                }
-            }
-        }
-        Err(e) => {
-            // JSON 解析失败：把整批标记为失败，保留原始输出便于排查
-            for b in batch {
-                failed.insert(b.id.clone(), format!("解析失败: {e}"));
-            }
-            log::warn!("批量 JSON 解析失败，原始输出: {full}");
-        }
-    }
-
-    Ok(BatchResult {
-        translations,
-        failed,
-    })
+    Ok(())
 }
 
-/// 剥离模型可能包裹的 ```json ... ``` 代码块标记。
-fn strip_code_fence(s: &str) -> &str {
-    let s = s.trim();
-    let s = s.strip_prefix("```json").unwrap_or(s);
-    let s = s.strip_prefix("```").unwrap_or(s);
-    let s = s.strip_suffix("```").unwrap_or(s);
-    s.trim()
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct ChatChunk {
     choices: Vec<ChatChoice>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct ChatChoice {
     delta: ChatDelta,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct ChatDelta {
     #[serde(default)]
     content: Option<String>,
 }
+
+// 保留旧的 TranslationStatus 引用，避免 unused import（types 模块导出用）
+#[allow(unused_imports)]
+use TranslationStatus as _UsedStatus;
