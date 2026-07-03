@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Check,
@@ -45,7 +45,6 @@ export function TranslationTable() {
   const workDir = useAppStore((s) => s.workDir);
   const selectedFiles = useAppStore((s) => s.selectedFiles);
   const entriesByFile = useAppStore((s) => s.entriesByFile);
-  const loadedFileNames = useAppStore((s) => s.loadedFileNames);
   const setFileEntries = useAppStore((s) => s.setFileEntries);
   const updateEntry = useAppStore((s) => s.updateEntry);
   const setEntryStatus = useAppStore((s) => s.setEntryStatus);
@@ -59,11 +58,26 @@ export function TranslationTable() {
   const [search, setSearch] = useState("");
   const [onlyPending, setOnlyPending] = useState(false);
 
+  // 用 ref 追踪已加载的文件，避免它进入 useEffect 依赖造成循环
+  // （store 的 loadedFileNames Set 每次更新都产生新引用，会导致 effect 反复触发）
+  const loadedRef = useRef<Set<string>>(new Set());
+  const lastWorkDir = useRef<string | null>(null);
+  // 切换 MOD（workDir 变化）时清空已加载记录
+  if (workDir !== lastWorkDir.current) {
+    lastWorkDir.current = workDir;
+    loadedRef.current = new Set();
+  }
+
   // 选中文件变化时，为新加入且未加载的文件加载条目
+  // 依赖只用 workDir 和 selectedFiles 的稳定派生值（文件名列表），避免循环
+  const selectedKey = selectedFiles.map((f) => f.name).join("|");
   useEffect(() => {
     if (!workDir || selectedFiles.length === 0) return;
-    const toLoad = selectedFiles.filter((f) => !loadedFileNames.has(f.name));
+    const toLoad = selectedFiles.filter((f) => !loadedRef.current.has(f.name));
     if (toLoad.length === 0) return;
+    // 立即标记为已加载，防止 effect 重入时重复请求
+    toLoad.forEach((f) => loadedRef.current.add(f.name));
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -74,9 +88,10 @@ export function TranslationTable() {
             if (!cancelled) setFileEntries(f.name, entries);
           })
           .catch((e) => {
-            if (!cancelled) setError(`${f.name}: ${String(e)}`);
-            // 即使失败也标记已加载，避免重复尝试
-            if (!cancelled) setFileEntries(f.name, []);
+            if (!cancelled) {
+              setError(`${f.name}: ${String(e)}`);
+              setFileEntries(f.name, []);
+            }
           }),
       ),
     ).finally(() => {
@@ -85,7 +100,8 @@ export function TranslationTable() {
     return () => {
       cancelled = true;
     };
-  }, [workDir, selectedFiles, loadedFileNames, setFileEntries, setError]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workDir, selectedKey]);
 
   // 聚合所有选中文件的条目
   const allEntries = useMemo(() => {
