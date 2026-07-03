@@ -194,22 +194,22 @@ export function GlossaryPanel({ onClose }: { onClose: () => void }) {
             {visible.length !== glossary?.terms.length && `（当前显示 ${visible.length}）`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <Button size="sm" variant="outline" onClick={onImport}>
             <Upload className="h-4 w-4" />
-            导入
+            <span className="hidden sm:inline">导入</span>
           </Button>
           <Button size="sm" variant="outline" onClick={onReset}>
             <RotateCcw className="h-4 w-4" />
-            重置
+            <span className="hidden sm:inline">重置</span>
           </Button>
           <Button size="sm" onClick={startAdd}>
             <Plus className="h-4 w-4" />
-            新增
+            <span className="hidden sm:inline">新增</span>
           </Button>
           <Button size="sm" variant="ghost" onClick={onClose}>
             <X className="h-4 w-4" />
-            关闭
+            <span className="hidden sm:inline">关闭</span>
           </Button>
         </div>
       </div>
@@ -221,7 +221,7 @@ export function GlossaryPanel({ onClose }: { onClose: () => void }) {
       )}
 
       {/* 搜索 + 分类筛选 */}
-      <div className="flex items-center gap-2 border-b px-4 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
         <div className="relative flex-1">
           <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -276,10 +276,10 @@ export function GlossaryPanel({ onClose }: { onClose: () => void }) {
             <tbody className="divide-y">
               {visible.slice(0, limit).map((t) => (
                 <tr key={t.source} className="hover:bg-accent/50">
-                  <td className="max-w-[240px] truncate px-4 py-1.5" title={t.source}>
+                  <td className="max-w-[180px] truncate px-4 py-1.5 sm:max-w-[280px]" title={t.source}>
                     {t.source}
                   </td>
-                  <td className="max-w-[240px] truncate px-4 py-1.5" title={t.target}>
+                  <td className="max-w-[180px] truncate px-4 py-1.5 sm:max-w-[280px]" title={t.target}>
                     {t.target}
                   </td>
                   <td className="px-3 py-1.5">

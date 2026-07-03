@@ -6,6 +6,7 @@ import {
   Package,
   Shield,
   BookOpen,
+  Settings,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -58,55 +59,103 @@ function Stepper() {
   );
 }
 
-function Header({ onOpenGlossary }: { onOpenGlossary: () => void }) {
+function Header({
+  onOpenGlossary,
+  onOpenSettings,
+}: {
+  onOpenGlossary: () => void;
+  onOpenSettings: () => void;
+}) {
+  const settings = useAppStore((s) => s.settings);
+  const configured = settings.apiKey.length > 0;
   return (
-    <header className="flex items-center justify-between border-b px-6 py-3">
+    <header className="flex items-center justify-between border-b px-4 py-2.5 md:px-6">
       <div className="flex items-center gap-2">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
           <Languages className="h-4 w-4" />
         </div>
-        <div>
+        <div className="hidden sm:block">
           <h1 className="text-sm font-bold leading-tight">BG3 MOD 汉化工具</h1>
           <p className="text-[10px] text-muted-foreground">
             博德之门3 MOD 本地化翻译
           </p>
         </div>
       </div>
-      <div className="flex items-center gap-3">
-        <Stepper />
+      <div className="flex items-center gap-2 md:gap-3">
+        <div className="hidden lg:block">
+          <Stepper />
+        </div>
+        <Button size="sm" variant="outline" onClick={onOpenSettings}>
+          <Settings className="h-4 w-4" />
+          <span className="hidden md:inline">
+            {configured ? settings.model : "未配置"}
+          </span>
+          <span
+            className={`ml-1 inline-block h-2 w-2 rounded-full ${
+              configured ? "bg-emerald-500" : "bg-amber-500"
+            }`}
+          />
+        </Button>
         <Button size="sm" variant="outline" onClick={onOpenGlossary}>
           <BookOpen className="h-4 w-4" />
-          术语表
+          <span className="hidden md:inline">术语表</span>
         </Button>
       </div>
     </header>
   );
 }
 
-function HomePage() {
+function HomePage({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const settings = useAppStore((s) => s.settings);
+  const configured = settings.apiKey.length > 0;
   return (
-    <div className="grid gap-4 p-6 md:grid-cols-2">
+    <div className="mx-auto flex max-w-2xl flex-col gap-4 p-4 md:p-8">
       <FileDropZone />
-      <div className="space-y-4">
-        <SettingsPanel />
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Shield className="h-4 w-4" />
-              工作流程
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ol className="space-y-2 text-sm text-muted-foreground">
-              <li>1. 选择 MOD 文件（.pak 或 .zip）</li>
-              <li>2. 配置大模型 API（OpenAI 兼容协议）</li>
-              <li>3. 自动解包，识别可翻译的本地化文件</li>
-              <li>4. 流式翻译，人工校对</li>
-              <li>5. 原样重新打包为 .pak</li>
-            </ol>
-          </CardContent>
-        </Card>
-      </div>
+      {/* 紧凑的配置状态条 */}
+      <Card>
+        <CardContent className="flex items-center justify-between p-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <Settings className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="truncate text-sm font-medium">
+                {configured ? settings.model : "未配置大模型"}
+              </span>
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
+                  configured
+                    ? "bg-emerald-500/15 text-emerald-600"
+                    : "bg-amber-500/15 text-amber-600"
+                }`}
+              >
+                {configured ? "已就绪" : "需配置"}
+              </span>
+            </div>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+              {configured ? settings.baseUrl : "点击右侧按钮配置 API（支持 DeepSeek/智谱/OpenAI 等）"}
+            </p>
+          </div>
+          <Button size="sm" variant="outline" className="ml-3 shrink-0" onClick={onOpenSettings}>
+            配置
+          </Button>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Shield className="h-4 w-4" />
+            工作流程
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ol className="space-y-2 text-sm text-muted-foreground">
+            <li>1. 选择 MOD 文件（.pak 或 .zip）</li>
+            <li>2. 配置大模型 API（OpenAI 兼容协议）</li>
+            <li>3. 自动解包，识别可翻译的本地化文件</li>
+            <li>4. 流式翻译，人工校对</li>
+            <li>5. 原样重新打包为 .pak</li>
+          </ol>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -138,23 +187,24 @@ function FilesPage() {
   };
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-[300px_1fr] gap-0">
-      <div className="min-h-0 border-r">
+    <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 lg:grid-cols-[280px_1fr]">
+      {/* 窄屏时文件树折叠为顶部条；宽屏时为左侧栏 */}
+      <div className="min-h-0 border-b lg:border-b-0 lg:border-r">
         <FileTree
           files={files}
           selectedFiles={selectedFiles}
           onSelectionChange={setSelectedFiles}
         />
       </div>
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="min-h-0 flex-1">
           <TranslationTable />
         </div>
         {/* 固定在底部的操作栏 */}
-        <div className="flex shrink-0 items-center justify-between border-t bg-muted/30 px-4 py-3">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t bg-muted/30 px-4 py-3">
           <Button variant="ghost" onClick={() => setStage("home")}>
             <ChevronRight className="h-4 w-4 rotate-180" />
-            返回
+            <span className="hidden sm:inline">返回</span>
           </Button>
           <Button onClick={onGoPack} disabled={!workDir || selectedFiles.length === 0}>
             <CheckCircle2 className="h-4 w-4" />
@@ -202,8 +252,8 @@ function DonePage() {
   const translatable = files.filter((f) => LOCALIZATION_KINDS.includes(f.kind));
 
   return (
-    <div className="flex items-center justify-center p-6">
-      <Card className="max-w-lg">
+    <div className="mx-auto flex max-w-2xl items-center justify-center p-4 md:p-8">
+      <Card className="w-full">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Package className="h-5 w-5" />
@@ -274,6 +324,7 @@ function App() {
   const error = useAppStore((s) => s.error);
   const setError = useAppStore((s) => s.setError);
   const [showGlossary, setShowGlossary] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   // 错误 toast（简化版：顶部 banner）
   useEffect(() => {
@@ -285,7 +336,10 @@ function App() {
 
   return (
     <div className="relative flex h-screen flex-col bg-background">
-      <Header onOpenGlossary={() => setShowGlossary(true)} />
+      <Header
+        onOpenGlossary={() => setShowGlossary(true)}
+        onOpenSettings={() => setShowSettings(true)}
+      />
       {error && (
         <div className="bg-destructive px-6 py-2 text-sm text-destructive-foreground">
           ⚠ {error}
@@ -300,10 +354,21 @@ function App() {
             : "flex-1 overflow-auto"
         }
       >
-        {stage === "home" && <HomePage />}
+        {stage === "home" && <HomePage onOpenSettings={() => setShowSettings(true)} />}
         {stage === "files" && <FilesPage />}
         {stage === "done" && <DonePage />}
       </div>
+      {/* 设置面板（覆盖层）*/}
+      {showSettings && (
+        <div className="absolute inset-0 z-40 flex items-start justify-center overflow-auto bg-black/40 p-4 md:p-8">
+          <div className="w-full max-w-md">
+            <SettingsPanel compact={false} />
+            <div className="mt-3 flex justify-center">
+              <Button onClick={() => setShowSettings(false)}>完成</Button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* 术语表面板（覆盖层）*/}
       {showGlossary && (
         <div className="absolute inset-0 z-40 bg-background">
