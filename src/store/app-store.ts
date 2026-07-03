@@ -9,6 +9,16 @@ import type {
 /** 应用整体流程阶段 */
 export type AppStage = "home" | "files" | "translate" | "done";
 
+/** 主题 */
+export type Theme = "light" | "dark" | "cyberpunk" | "dungeon";
+
+export const THEMES: { value: Theme; label: string; desc: string }[] = [
+  { value: "light", label: "浅色", desc: "明亮简洁" },
+  { value: "dark", label: "深色", desc: "护眼夜间" },
+  { value: "cyberpunk", label: "赛博朋克", desc: "霓虹粉青" },
+  { value: "dungeon", label: "地下城", desc: "羊皮纸烛火" },
+];
+
 /** 按文件名缓存条目，key = PakFile.name */
 type EntriesByFile = Record<string, TranslationEntry[]>;
 
@@ -38,6 +48,9 @@ interface AppState {
   settings: LlmSettings;
   settingsLoaded: boolean;
 
+  // ── 主题 ──
+  theme: Theme;
+
   // ── 加载态 ──
   loading: boolean;
   error: string | null;
@@ -58,6 +71,7 @@ interface AppState {
   /** 获取某个文件的条目，用于写回 */
   getFileEntries: (fileName: string) => TranslationEntry[];
   setSettings: (settings: LlmSettings) => void;
+  setTheme: (theme: Theme) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   reset: () => void;
@@ -71,6 +85,45 @@ const DEFAULT_SETTINGS: LlmSettings = {
   batchSize: 10,
 };
 
+const THEME_KEY = "bg3-translate-theme";
+
+function loadTheme(): Theme {
+  try {
+    const saved = localStorage.getItem(THEME_KEY) as Theme | null;
+    const theme = saved ?? "dark";
+    applyTheme(theme);
+    return theme;
+  } catch {
+    return "dark";
+  }
+}
+
+function saveTheme(theme: Theme) {
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 给 <html> 元素设置主题 class（CSS 变量据此切换）*/
+function applyTheme(theme: Theme) {
+  if (typeof document === "undefined") return;
+  const el = document.documentElement;
+  el.classList.remove(
+    "theme-light",
+    "theme-dark",
+    "theme-cyberpunk",
+    "theme-dungeon",
+    "dark",
+  );
+  el.classList.add(`theme-${theme}`);
+  // 兼容 Tailwind dark: 变体（深色系主题也激活 dark）
+  if (theme === "dark" || theme === "cyberpunk" || theme === "dungeon") {
+    el.classList.add("dark");
+  }
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   stage: "home",
   modFilePath: null,
@@ -83,6 +136,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   translatingIds: new Set(),
   settings: DEFAULT_SETTINGS,
   settingsLoaded: false,
+  theme: loadTheme(),
   loading: false,
   error: null,
 
@@ -155,6 +209,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   getFileEntries: (fileName) => get().entriesByFile[fileName] ?? [],
   setSettings: (settings) => set({ settings, settingsLoaded: true }),
+  setTheme: (theme) => {
+    saveTheme(theme);
+    applyTheme(theme);
+    set({ theme });
+  },
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
   reset: () =>

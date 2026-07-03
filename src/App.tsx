@@ -7,6 +7,7 @@ import {
   Shield,
   BookOpen,
   Settings,
+  Palette,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +24,8 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { TranslationTable } from "@/components/TranslationTable";
 import { useAppStore } from "@/store/app-store";
 import { pickSavePath, repackMod, writeFileEntries } from "@/lib/tauri";
-import type { AppStage } from "@/store/app-store";
+import type { AppStage, Theme } from "@/store/app-store";
+import { THEMES } from "@/store/app-store";
 
 const STEPS: { stage: AppStage; label: string; icon: React.ReactNode }[] = [
   { stage: "home", label: "选择 MOD", icon: <Package className="h-4 w-4" /> },
@@ -59,6 +61,28 @@ function Stepper() {
   );
 }
 
+function ThemeSwitcher() {
+  const theme = useAppStore((s) => s.theme);
+  const setTheme = useAppStore((s) => s.setTheme);
+  return (
+    <div className="relative">
+      <select
+        value={theme}
+        onChange={(e) => setTheme(e.target.value as Theme)}
+        className="h-8 cursor-pointer rounded-md border border-input bg-background pl-7 pr-6 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        title="切换主题"
+      >
+        {THEMES.map((t) => (
+          <option key={t.value} value={t.value}>
+            {t.label}
+          </option>
+        ))}
+      </select>
+      <Palette className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+    </div>
+  );
+}
+
 function Header({
   onOpenGlossary,
   onOpenSettings,
@@ -85,6 +109,7 @@ function Header({
         <div className="hidden lg:block">
           <Stepper />
         </div>
+        <ThemeSwitcher />
         <Button size="sm" variant="outline" onClick={onOpenSettings}>
           <Settings className="h-4 w-4" />
           <span className="hidden md:inline">
