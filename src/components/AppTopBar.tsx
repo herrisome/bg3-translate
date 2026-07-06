@@ -130,7 +130,7 @@ function WindowControls() {
 
 export function AppTopBar({
   title = "BG3 MOD 汉化工具",
-  subtitle = "博德之门3 MOD 本地化翻译",
+  subtitle = "BG3 MOD 本地化翻译",
   showStepper = false,
   onOpenGlossary,
   onOpenSettings,

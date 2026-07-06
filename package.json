@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "博德之门3 MOD 汉化工具",
+  "description": "BG3 MOD 汉化工具",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

@@ -209,7 +209,7 @@ function DonePage() {
                     {outputPath}
                   </div>
                   <p className="mt-3 shrink-0 text-xs text-muted-foreground">
-                    输出文件已保存，可直接导入 mod 管理器。
+                    输出文件已保存，可直接导入 MOD 管理器。
                   </p>
                 </div>
               ) : (
