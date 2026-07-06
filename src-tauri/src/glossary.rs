@@ -15,16 +15,17 @@ pub type Category = String;
 
 /// 单条术语（字段与从游戏提取的真实术语表 JSON 一致）
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GlossaryEntry {
     /// 英文术语
     pub source: String,
     /// 中文译名
     pub target: String,
-    /// 分类（name_or_title / mechanic / ui_or_mechanic / legacy / short_phrase / class / race / ...）
-    #[serde(default = "default_category")]
+    /// 分类仅用于兼容旧导入数据，界面与保存文件不再展示/输出。
+    #[serde(default = "default_category", skip_serializing)]
     pub category: Category,
     /// 来源（official / user）
-    #[serde(default)]
+    #[serde(default, alias = "source_kind")]
     pub source_kind: String,
     /// 是否启用
     #[serde(default = "default_true")]
@@ -33,10 +34,10 @@ pub struct GlossaryEntry {
     #[serde(default)]
     pub ambiguous: bool,
     /// 是否整词匹配
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", alias = "whole_word")]
     pub whole_word: bool,
     /// 是否大小写敏感
-    #[serde(default)]
+    #[serde(default, alias = "case_sensitive")]
     pub case_sensitive: bool,
     /// 在游戏原文中的出现次数（排序参考）
     #[serde(default)]
@@ -66,6 +67,7 @@ impl Default for Glossary {
 }
 
 /// 命中项
+#[derive(Debug, Clone)]
 pub struct MatchedTerm {
     pub source: String,
     pub target: String,
@@ -135,7 +137,7 @@ pub fn reset() -> Result<Glossary> {
 
 /// 从 JSON 字符串导入术语，导入时自动清洗：
 /// - 过滤噪音条目（占位符模板、UI 按键标记、破折号破碎文本、常见短词）
-/// - 去除 source/target 两端的引号、括号、破折号等标点
+/// - 只去掉包住整条术语的外层引号，局部引号保留
 pub fn import_json(json_str: &str) -> Result<Glossary> {
     let imported: Glossary = serde_json::from_str(json_str)
         .map_err(|e| AppError::Config(format!("术语表 JSON 解析失败: {e}")))?;
@@ -161,8 +163,8 @@ pub fn import_json(json_str: &str) -> Result<Glossary> {
 /// 清洗单条术语。返回 None 表示应过滤掉（噪音）。
 fn clean_entry(entry: &mut GlossaryEntry) -> Option<GlossaryEntry> {
     use regex::Regex;
-    let source = entry.source.trim();
-    let target = entry.target.trim();
+    let source = entry.source.trim().to_string();
+    let target = entry.target.trim().to_string();
 
     // 空值过滤
     if source.is_empty() || target.is_empty() {
@@ -172,13 +174,11 @@ fn clean_entry(entry: &mut GlossaryEntry) -> Option<GlossaryEntry> {
     // ── 噪音过滤（这些不是术语，是从本地化文件机械提取的碎片）──
 
     // 占位符模板（[1] from [2]、+[1] Damage 这种句式模板）
-    if Regex::new(r"\[\d+\]").unwrap().is_match(source) {
+    if Regex::new(r"\[\d+\]").unwrap().is_match(&source) {
         return None;
     }
     // UI 按键标记（[IE_xxx]、[DRUID] 这种内部 ID）
-    if source.contains("[IE_")
-        || Regex::new(r"^\[[A-Z_]{2,}\]").unwrap().is_match(source)
-    {
+    if source.contains("[IE_") || Regex::new(r"^\[[A-Z_]{2,}\]").unwrap().is_match(&source) {
         return None;
     }
     // 破折号破碎文本（-- come ----、---OBEY--- 这种）
@@ -193,44 +193,67 @@ fn clean_entry(entry: &mut GlossaryEntry) -> Option<GlossaryEntry> {
         }
     }
     // 纯符号/标点
-    if Regex::new(r"^[\W_]+$").unwrap().is_match(source) {
+    if Regex::new(r"^[\W_]+$").unwrap().is_match(&source) {
         return None;
     }
     // 过短的常见英文词（of/and/the 等会误匹配正常文本）
     // 覆盖大小写变体（OF/Of/of 都要过滤）
     let common_short = [
-        "of", "and", "the", "or", "for", "to", "in", "on", "at", "by", "is", "it", "as",
-        "be", "do", "no", "if", "an", "my", "we", "he", "up", "so", "tag", "end", "yes",
-        "die", "one", "two", "from", "upon", "with", "that", "this", "then", "than",
-        "but", "not", "all", "any", "can", "may", "has", "had", "was", "are", "were",
-        "let", "set", "get", "put", "out", "off", "own", "new", "old", "big", "low",
+        "of", "and", "the", "or", "for", "to", "in", "on", "at", "by", "is", "it", "as", "be",
+        "do", "no", "if", "an", "my", "we", "he", "up", "so", "tag", "end", "yes", "die", "one",
+        "two", "from", "upon", "with", "that", "this", "then", "than", "but", "not", "all", "any",
+        "can", "may", "has", "had", "was", "are", "were", "let", "set", "get", "put", "out", "off",
+        "own", "new", "old", "big", "low",
     ];
     let lower = source.to_lowercase();
     if source.len() <= 4 && common_short.contains(&lower.as_str()) {
         return None;
     }
 
-    // ── 标点清理（保留条目，但去除两端多余标点）──
-    // 去除两端的引号 ' " （常见于游戏内的标题/书名）
-    let trimmed_source = trim_quotes(source);
-    let trimmed_target = trim_quotes(target);
-
-    // 清理后再检查是否变空
-    if trimmed_source.is_empty() || trimmed_target.is_empty() {
-        return None;
-    }
-
-    entry.source = trimmed_source;
-    entry.target = trimmed_target;
+    entry.source = strip_full_wrapping_quotes(&source);
+    entry.target = strip_full_wrapping_quotes(&target);
     Some(entry.clone())
 }
 
-/// 去除字符串两端的引号和包裹性标点（' " 「 」 『 』）。
-fn trim_quotes(s: &str) -> String {
-    let mut result = s.trim_matches(|c| c == '\'' || c == '"' || c == '「' || c == '」' || c == '『' || c == '』');
-    // 再 trim 一次空白（去掉引号后可能暴露的空格）
-    result = result.trim();
-    result.to_string()
+/// 只去除包住整条文本的成对引号。
+/// `"丹瑟隆的飞斧"` -> `丹瑟隆的飞斧`
+/// `"制动"拉杆` -> `"制动"拉杆`
+fn strip_full_wrapping_quotes(s: &str) -> String {
+    let s = s.trim();
+    let Some(first) = s.chars().next() else {
+        return String::new();
+    };
+    let Some(expected_last) = matching_quote(first) else {
+        return s.to_string();
+    };
+    if !s.ends_with(expected_last) {
+        return s.to_string();
+    }
+
+    let start = first.len_utf8();
+    let end = s.len() - expected_last.len_utf8();
+    if start >= end {
+        return s.to_string();
+    }
+
+    let inner = s[start..end].trim();
+    if inner.is_empty() {
+        s.to_string()
+    } else {
+        inner.to_string()
+    }
+}
+
+fn matching_quote(c: char) -> Option<char> {
+    match c {
+        '\'' => Some('\''),
+        '"' => Some('"'),
+        '“' => Some('”'),
+        '‘' => Some('’'),
+        '「' => Some('」'),
+        '『' => Some('』'),
+        _ => None,
+    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -249,11 +272,7 @@ pub fn add(glossary: &mut Glossary, entry: GlossaryEntry) -> Result<()> {
     Ok(())
 }
 
-pub fn update(
-    glossary: &mut Glossary,
-    old_source: &str,
-    entry: GlossaryEntry,
-) -> Result<()> {
+pub fn update(glossary: &mut Glossary, old_source: &str, entry: GlossaryEntry) -> Result<()> {
     if entry.source.trim().is_empty() || entry.target.trim().is_empty() {
         return Err(AppError::Config("术语的中英文均不能为空".into()));
     }
@@ -273,7 +292,9 @@ pub fn delete(glossary: &mut Glossary, source: &str) -> Result<()> {
         .find(|e| e.source == source)
         .ok_or_else(|| AppError::Config("找不到要删除的术语".into()))?;
     if entry.source_kind == "official" {
-        return Err(AppError::Config("官方术语不可删除（可禁用或编辑覆盖）".into()));
+        return Err(AppError::Config(
+            "官方术语不可删除（可禁用或编辑覆盖）".into(),
+        ));
     }
     glossary.terms.retain(|e| e.source != source);
     Ok(())
@@ -351,114 +372,522 @@ fn word_boundary_match(haystack: &str, needle: &str) -> bool {
 const fn official_seed() -> &'static [StaticEntry] {
     &[
         // ── 职业 Class ──
-        StaticEntry { source: "Barbarian", target: "野蛮人", category: "class" },
-        StaticEntry { source: "Bard", target: "吟游诗人", category: "class" },
-        StaticEntry { source: "Cleric", target: "牧师", category: "class" },
-        StaticEntry { source: "Druid", target: "德鲁伊", category: "class" },
-        StaticEntry { source: "Fighter", target: "战士", category: "class" },
-        StaticEntry { source: "Monk", target: "武僧", category: "class" },
-        StaticEntry { source: "Paladin", target: "圣武士", category: "class" },
-        StaticEntry { source: "Ranger", target: "游侠", category: "class" },
-        StaticEntry { source: "Rogue", target: "游荡者", category: "class" },
-        StaticEntry { source: "Sorcerer", target: "术士", category: "class" },
-        StaticEntry { source: "Warlock", target: "邪术师", category: "class" },
-        StaticEntry { source: "Wizard", target: "法师", category: "class" },
-        StaticEntry { source: "Eldritch Knight", target: "奥法骑士", category: "class" },
-        StaticEntry { source: "Oathbreaker", target: "破誓者", category: "class" },
-        StaticEntry { source: "Oath of Devotion", target: "奉献之誓", category: "class" },
-        StaticEntry { source: "Oath of the Ancients", target: "远古之誓", category: "class" },
-        StaticEntry { source: "Oath of Vengeance", target: "复仇之誓", category: "class" },
+        StaticEntry {
+            source: "Barbarian",
+            target: "野蛮人",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Bard",
+            target: "吟游诗人",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Cleric",
+            target: "牧师",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Druid",
+            target: "德鲁伊",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Fighter",
+            target: "战士",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Monk",
+            target: "武僧",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Paladin",
+            target: "圣武士",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Ranger",
+            target: "游侠",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Rogue",
+            target: "游荡者",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Sorcerer",
+            target: "术士",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Warlock",
+            target: "邪术师",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Wizard",
+            target: "法师",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Eldritch Knight",
+            target: "奥法骑士",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Oathbreaker",
+            target: "破誓者",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Oath of Devotion",
+            target: "奉献之誓",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Oath of the Ancients",
+            target: "远古之誓",
+            category: "class",
+        },
+        StaticEntry {
+            source: "Oath of Vengeance",
+            target: "复仇之誓",
+            category: "class",
+        },
         // ── 种族 Race ──
-        StaticEntry { source: "Half-Elf", target: "半精灵", category: "race" },
-        StaticEntry { source: "High Elf", target: "高等精灵", category: "race" },
-        StaticEntry { source: "Wood Elf", target: "木精灵", category: "race" },
-        StaticEntry { source: "Drow", target: "卓尔", category: "race" },
-        StaticEntry { source: "Duergar", target: "灰矮人", category: "race" },
-        StaticEntry { source: "Halfling", target: "半身人", category: "race" },
-        StaticEntry { source: "Githyanki", target: "吉斯洋基人", category: "race" },
-        StaticEntry { source: "Tiefling", target: "提夫林", category: "race" },
-        StaticEntry { source: "Dragonborn", target: "龙裔", category: "race" },
-        StaticEntry { source: "Half-Orc", target: "半兽人", category: "race" },
+        StaticEntry {
+            source: "Half-Elf",
+            target: "半精灵",
+            category: "race",
+        },
+        StaticEntry {
+            source: "High Elf",
+            target: "高等精灵",
+            category: "race",
+        },
+        StaticEntry {
+            source: "Wood Elf",
+            target: "木精灵",
+            category: "race",
+        },
+        StaticEntry {
+            source: "Drow",
+            target: "卓尔",
+            category: "race",
+        },
+        StaticEntry {
+            source: "Duergar",
+            target: "灰矮人",
+            category: "race",
+        },
+        StaticEntry {
+            source: "Halfling",
+            target: "半身人",
+            category: "race",
+        },
+        StaticEntry {
+            source: "Githyanki",
+            target: "吉斯洋基人",
+            category: "race",
+        },
+        StaticEntry {
+            source: "Tiefling",
+            target: "提夫林",
+            category: "race",
+        },
+        StaticEntry {
+            source: "Dragonborn",
+            target: "龙裔",
+            category: "race",
+        },
+        StaticEntry {
+            source: "Half-Orc",
+            target: "半兽人",
+            category: "race",
+        },
         // ── 地点 Location ──
-        StaticEntry { source: "Baldur's Gate", target: "博德之门", category: "location" },
-        StaticEntry { source: "Faerûn", target: "费伦", category: "location" },
-        StaticEntry { source: "Forgotten Realms", target: "被遗忘的国度", category: "location" },
-        StaticEntry { source: "Toril", target: "托瑞尔", category: "location" },
-        StaticEntry { source: "the Underdark", target: "幽暗地域", category: "location" },
-        StaticEntry { source: "Avernus", target: "阿佛纳斯", category: "location" },
-        StaticEntry { source: "Sword Coast", target: "剑湾", category: "location" },
-        StaticEntry { source: "Candlekeep", target: "烛堡", category: "location" },
-        StaticEntry { source: "Menzoberranzan", target: "魔索布莱城", category: "location" },
-        StaticEntry { source: "Nine Hells", target: "九层地狱", category: "location" },
-        StaticEntry { source: "Nautiloid", target: "地狱螺壳舰", category: "location" },
-        StaticEntry { source: "Emerald Grove", target: "翡翠林苑", category: "location" },
+        StaticEntry {
+            source: "Baldur's Gate",
+            target: "博德之门",
+            category: "location",
+        },
+        StaticEntry {
+            source: "Faerûn",
+            target: "费伦",
+            category: "location",
+        },
+        StaticEntry {
+            source: "Forgotten Realms",
+            target: "被遗忘的国度",
+            category: "location",
+        },
+        StaticEntry {
+            source: "Toril",
+            target: "托瑞尔",
+            category: "location",
+        },
+        StaticEntry {
+            source: "the Underdark",
+            target: "幽暗地域",
+            category: "location",
+        },
+        StaticEntry {
+            source: "Avernus",
+            target: "阿佛纳斯",
+            category: "location",
+        },
+        StaticEntry {
+            source: "Sword Coast",
+            target: "剑湾",
+            category: "location",
+        },
+        StaticEntry {
+            source: "Candlekeep",
+            target: "烛堡",
+            category: "location",
+        },
+        StaticEntry {
+            source: "Menzoberranzan",
+            target: "魔索布莱城",
+            category: "location",
+        },
+        StaticEntry {
+            source: "Nine Hells",
+            target: "九层地狱",
+            category: "location",
+        },
+        StaticEntry {
+            source: "Nautiloid",
+            target: "地狱螺壳舰",
+            category: "location",
+        },
+        StaticEntry {
+            source: "Emerald Grove",
+            target: "翡翠林苑",
+            category: "location",
+        },
         // ── 角色 Character ──
-        StaticEntry { source: "Astarion", target: "阿斯代伦", category: "character" },
-        StaticEntry { source: "Shadowheart", target: "影心", category: "character" },
-        StaticEntry { source: "Gale", target: "盖尔", category: "character" },
-        StaticEntry { source: "Lae'zel", target: "莱埃泽尔", category: "character" },
-        StaticEntry { source: "Karlach", target: "卡尔拉赫", category: "character" },
-        StaticEntry { source: "Halsin", target: "哈尔辛", category: "character" },
-        StaticEntry { source: "Minthara", target: "明萨拉", category: "character" },
-        StaticEntry { source: "Withers", target: "威瑟斯", category: "character" },
-        StaticEntry { source: "The Emperor", target: "皇帝", category: "character" },
-        StaticEntry { source: "Vlaakith", target: "弗拉基丝", category: "character" },
-        StaticEntry { source: "Jaheira", target: "洁希拉", category: "character" },
-        StaticEntry { source: "Minsc", target: "敏斯克", category: "character" },
-        StaticEntry { source: "Raphael", target: "拉斐尔", category: "character" },
-        StaticEntry { source: "Mizora", target: "米佐拉", category: "character" },
-        StaticEntry { source: "Orin", target: "奥林", category: "character" },
-        StaticEntry { source: "Ketheric", target: "凯瑟里克", category: "character" },
-        StaticEntry { source: "Gortash", target: "戈塔什", category: "character" },
-        StaticEntry { source: "Mystra", target: "密斯特拉", category: "character" },
-        StaticEntry { source: "Dream Visitor", target: "梦境访客", category: "character" },
-        StaticEntry { source: "Voss", target: "维斯", category: "character" },
-        StaticEntry { source: "Novice of the Absolute", target: "至上真神学徒", category: "character" },
+        StaticEntry {
+            source: "Astarion",
+            target: "阿斯代伦",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Shadowheart",
+            target: "影心",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Gale",
+            target: "盖尔",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Lae'zel",
+            target: "莱埃泽尔",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Karlach",
+            target: "卡尔拉赫",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Halsin",
+            target: "哈尔辛",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Minthara",
+            target: "明萨拉",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Withers",
+            target: "威瑟斯",
+            category: "character",
+        },
+        StaticEntry {
+            source: "The Emperor",
+            target: "皇帝",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Vlaakith",
+            target: "弗拉基丝",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Jaheira",
+            target: "洁希拉",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Minsc",
+            target: "敏斯克",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Raphael",
+            target: "拉斐尔",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Mizora",
+            target: "米佐拉",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Orin",
+            target: "奥林",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Ketheric",
+            target: "凯瑟里克",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Gortash",
+            target: "戈塔什",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Mystra",
+            target: "密斯特拉",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Dream Visitor",
+            target: "梦境访客",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Voss",
+            target: "维斯",
+            category: "character",
+        },
+        StaticEntry {
+            source: "Novice of the Absolute",
+            target: "至上真神学徒",
+            category: "character",
+        },
         // ── 生物 Creature ──
-        StaticEntry { source: "Mind Flayer", target: "夺心魔", category: "creature" },
-        StaticEntry { source: "Illithid", target: "夺心魔", category: "creature" },
-        StaticEntry { source: "Tadpole", target: "蝌蚪", category: "creature" },
-        StaticEntry { source: "Beholder", target: "眼魔", category: "creature" },
-        StaticEntry { source: "Lich", target: "巫妖", category: "creature" },
-        StaticEntry { source: "Vampire Spawn", target: "吸血鬼衍体", category: "creature" },
-        StaticEntry { source: "Lycanthrope", target: "兽化人", category: "creature" },
-        StaticEntry { source: "Hobgoblin", target: "大地精", category: "creature" },
-        StaticEntry { source: "Bugbear", target: "熊地精", category: "creature" },
-        StaticEntry { source: "Owlbear", target: "枭熊", category: "creature" },
-        StaticEntry { source: "Cambion", target: "坎比翁", category: "creature" },
-        StaticEntry { source: "Intellect Devourer", target: "噬脑怪", category: "creature" },
-        StaticEntry { source: "Elder Brain", target: "主脑", category: "creature" },
+        StaticEntry {
+            source: "Mind Flayer",
+            target: "夺心魔",
+            category: "creature",
+        },
+        StaticEntry {
+            source: "Illithid",
+            target: "夺心魔",
+            category: "creature",
+        },
+        StaticEntry {
+            source: "Tadpole",
+            target: "蝌蚪",
+            category: "creature",
+        },
+        StaticEntry {
+            source: "Beholder",
+            target: "眼魔",
+            category: "creature",
+        },
+        StaticEntry {
+            source: "Lich",
+            target: "巫妖",
+            category: "creature",
+        },
+        StaticEntry {
+            source: "Vampire Spawn",
+            target: "吸血鬼衍体",
+            category: "creature",
+        },
+        StaticEntry {
+            source: "Lycanthrope",
+            target: "兽化人",
+            category: "creature",
+        },
+        StaticEntry {
+            source: "Hobgoblin",
+            target: "大地精",
+            category: "creature",
+        },
+        StaticEntry {
+            source: "Bugbear",
+            target: "熊地精",
+            category: "creature",
+        },
+        StaticEntry {
+            source: "Owlbear",
+            target: "枭熊",
+            category: "creature",
+        },
+        StaticEntry {
+            source: "Cambion",
+            target: "坎比翁",
+            category: "creature",
+        },
+        StaticEntry {
+            source: "Intellect Devourer",
+            target: "噬脑怪",
+            category: "creature",
+        },
+        StaticEntry {
+            source: "Elder Brain",
+            target: "主脑",
+            category: "creature",
+        },
         // ── 机制 Mechanic ──
-        StaticEntry { source: "Cantrip", target: "戏法", category: "mechanic" },
-        StaticEntry { source: "Spell Slot", target: "法术位", category: "mechanic" },
-        StaticEntry { source: "Proficiency Bonus", target: "熟练度加值", category: "mechanic" },
-        StaticEntry { source: "Advantage", target: "优势", category: "mechanic" },
-        StaticEntry { source: "Disadvantage", target: "劣势", category: "mechanic" },
-        StaticEntry { source: "Inspiration", target: "激励", category: "mechanic" },
-        StaticEntry { source: "Bonus Action", target: "附赠动作", category: "mechanic" },
-        StaticEntry { source: "Saving Throw", target: "豁免检定", category: "mechanic" },
-        StaticEntry { source: "Ability Check", target: "属性检定", category: "mechanic" },
-        StaticEntry { source: "Armor Class", target: "护甲等级", category: "mechanic" },
-        StaticEntry { source: "Hit Points", target: "生命值", category: "mechanic" },
-        StaticEntry { source: "Long Rest", target: "长休", category: "mechanic" },
-        StaticEntry { source: "Short Rest", target: "短休", category: "mechanic" },
-        StaticEntry { source: "Concentration", target: "专注", category: "mechanic" },
-        StaticEntry { source: "Difficulty Class", target: "难度等级", category: "mechanic" },
-        StaticEntry { source: "Initiative", target: "先攻", category: "mechanic" },
-        StaticEntry { source: "Critical Hit", target: "重击", category: "mechanic" },
-        StaticEntry { source: "Sneak Attack", target: "偷袭", category: "mechanic" },
-        StaticEntry { source: "Divine Smite", target: "至圣斩", category: "mechanic" },
-        StaticEntry { source: "Wild Shape", target: "荒野形态", category: "mechanic" },
-        StaticEntry { source: "Necrotic", target: "黯蚀", category: "mechanic" },
-        StaticEntry { source: "Radiant", target: "光耀", category: "mechanic" },
+        StaticEntry {
+            source: "Cantrip",
+            target: "戏法",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Spell Slot",
+            target: "法术位",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Proficiency Bonus",
+            target: "熟练度加值",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Advantage",
+            target: "优势",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Disadvantage",
+            target: "劣势",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Inspiration",
+            target: "激励",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Bonus Action",
+            target: "附赠动作",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Saving Throw",
+            target: "豁免检定",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Ability Check",
+            target: "属性检定",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Armor Class",
+            target: "护甲等级",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Hit Points",
+            target: "生命值",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Long Rest",
+            target: "长休",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Short Rest",
+            target: "短休",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Concentration",
+            target: "专注",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Difficulty Class",
+            target: "难度等级",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Initiative",
+            target: "先攻",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Critical Hit",
+            target: "重击",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Sneak Attack",
+            target: "偷袭",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Divine Smite",
+            target: "至圣斩",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Wild Shape",
+            target: "荒野形态",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Necrotic",
+            target: "黯蚀",
+            category: "mechanic",
+        },
+        StaticEntry {
+            source: "Radiant",
+            target: "光耀",
+            category: "mechanic",
+        },
         // ── 法术 Spell ──
-        StaticEntry { source: "Fireball", target: "火球术", category: "spell" },
-        StaticEntry { source: "Magic Missile", target: "魔法飞弹", category: "spell" },
-        StaticEntry { source: "Eldritch Blast", target: "魔能爆", category: "spell" },
-        StaticEntry { source: "Healing Word", target: "治愈真言", category: "spell" },
-        StaticEntry { source: "Misty Step", target: "迷踪步", category: "spell" },
-        StaticEntry { source: "Counterspell", target: "反制法术", category: "spell" },
-        StaticEntry { source: "Speak with Dead", target: "与亡者交谈", category: "spell" },
+        StaticEntry {
+            source: "Fireball",
+            target: "火球术",
+            category: "spell",
+        },
+        StaticEntry {
+            source: "Magic Missile",
+            target: "魔法飞弹",
+            category: "spell",
+        },
+        StaticEntry {
+            source: "Eldritch Blast",
+            target: "魔能爆",
+            category: "spell",
+        },
+        StaticEntry {
+            source: "Healing Word",
+            target: "治愈真言",
+            category: "spell",
+        },
+        StaticEntry {
+            source: "Misty Step",
+            target: "迷踪步",
+            category: "spell",
+        },
+        StaticEntry {
+            source: "Counterspell",
+            target: "反制法术",
+            category: "spell",
+        },
+        StaticEntry {
+            source: "Speak with Dead",
+            target: "与亡者交谈",
+            category: "spell",
+        },
     ]
 }
 
@@ -485,7 +914,9 @@ mod tests {
     #[test]
     fn find_word_boundary() {
         let g = Glossary::default();
-        assert!(!find_matches("Spelling bee", &g).iter().any(|t| t.source == "Cantrip"));
+        assert!(!find_matches("Spelling bee", &g)
+            .iter()
+            .any(|t| t.source == "Cantrip"));
         assert!(find_matches("Cast a Spell", &g).is_empty() || true); // Spell 不在种子
     }
 
@@ -527,7 +958,9 @@ mod tests {
             case_sensitive: false,
             count: 0,
         });
-        assert!(!find_matches("Test here", &g).iter().any(|t| t.source == "Test"));
+        assert!(!find_matches("Test here", &g)
+            .iter()
+            .any(|t| t.source == "Test"));
     }
 
     #[test]
@@ -544,7 +977,9 @@ mod tests {
             case_sensitive: false,
             count: 0,
         });
-        assert!(find_matches("Disabled", &g).iter().all(|t| t.source != "Disabled"));
+        assert!(find_matches("Disabled", &g)
+            .iter()
+            .all(|t| t.source != "Disabled"));
     }
 
     #[test]
@@ -601,15 +1036,17 @@ mod tests {
     }
 
     #[test]
-    fn clean_strips_quotes() {
-        // 带引号的标题：去掉引号后保留
+    fn clean_strips_full_quotes_but_keeps_partial_quotes() {
         let json = r#"{"terms":[
-            {"source":"'Barnabus'","target":"\"巴那布斯\"","category":"name_or_title","source_kind":"official","enabled":true,"ambiguous":false,"whole_word":true,"case_sensitive":false,"count":1}
+            {"source":"'Danthelon's Dancing Axe'","target":"\"丹瑟隆的飞斧\"","category":"name_or_title","source_kind":"official","enabled":true,"ambiguous":false,"whole_word":true,"case_sensitive":false,"count":1},
+            {"source":"'Brake' Lever","target":"\"制动\"拉杆","category":"name_or_title","source_kind":"official","enabled":true,"ambiguous":false,"whole_word":true,"case_sensitive":false,"count":1}
         ]}"#;
         let g = import_json(json).unwrap();
-        assert_eq!(g.terms.len(), 1);
-        assert_eq!(g.terms[0].source, "Barnabus", "source 引号应被去除");
-        assert_eq!(g.terms[0].target, "巴那布斯", "target 引号应被去除");
+        assert_eq!(g.terms.len(), 2);
+        assert_eq!(g.terms[0].source, "Danthelon's Dancing Axe");
+        assert_eq!(g.terms[0].target, "丹瑟隆的飞斧");
+        assert_eq!(g.terms[1].source, "'Brake' Lever");
+        assert_eq!(g.terms[1].target, "\"制动\"拉杆");
     }
 
     #[test]
@@ -644,13 +1081,17 @@ mod tests {
             !cleaned.terms.iter().any(|t| t.source.contains("[IE_")),
             "不应残留 UI 标记"
         );
-        // 验证没有引号包裹的 source
+        // 验证局部引号保留，整条外层引号会清理。
         assert!(
-            !cleaned
+            cleaned
                 .terms
                 .iter()
-                .any(|t| t.source.starts_with('\'') || t.source.starts_with('"')),
-            "不应残留引号包裹的 source"
+                .any(|t| t.source.starts_with('\'') && !t.source.ends_with('\'')),
+            "应保留局部引号"
+        );
+        assert!(
+            !cleaned.terms.iter().any(|t| t.source == "'Barnabus'"),
+            "整条外层引号应被去除"
         );
         println!("✅ 真实术语表清洗验证通过");
     }

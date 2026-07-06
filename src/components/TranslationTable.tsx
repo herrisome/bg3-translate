@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Check,
+  CircleStop,
   Edit3,
   Languages,
   Loader2,
   Play,
   RotateCcw,
   Search,
+  WandSparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +18,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
-import { readFileEntries, translateEntries } from "@/lib/tauri";
+import { cancelTranslation, readFileEntries, translateEntries } from "@/lib/tauri";
 import { useAppStore } from "@/store/app-store";
 import type { TranslationEntry, TranslationStatus } from "@/lib/types";
 
@@ -41,6 +43,10 @@ function shortSource(fileName: string): string {
   return parts.slice(-2).join("/");
 }
 
+function isTranslationWorkItem(entry: TranslationEntry): boolean {
+  return entry.source.trim().length > 0;
+}
+
 export function TranslationTable() {
   const workDir = useAppStore((s) => s.workDir);
   const selectedFiles = useAppStore((s) => s.selectedFiles);
@@ -53,20 +59,28 @@ export function TranslationTable() {
 
   const [loading, setLoading] = useState(false);
   const [translating, setTranslating] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [search, setSearch] = useState("");
+  const [styleHint, setStyleHint] = useState("");
   const [onlyPending, setOnlyPending] = useState(false);
 
   // 用 ref 追踪已加载的文件，避免它进入 useEffect 依赖造成循环
   // （store 的 loadedFileNames Set 每次更新都产生新引用，会导致 effect 反复触发）
   const loadedRef = useRef<Set<string>>(new Set());
   const lastWorkDir = useRef<string | null>(null);
+  const cancelRequestedRef = useRef(false);
+  const completedIdsRef = useRef<Set<string>>(new Set());
   // 切换 MOD（workDir 变化）时清空已加载记录
   if (workDir !== lastWorkDir.current) {
     lastWorkDir.current = workDir;
     loadedRef.current = new Set();
   }
+
+  useEffect(() => {
+    setStyleHint("");
+  }, [workDir]);
 
   // 选中文件变化时，为新加入且未加载的文件加载条目
   // 依赖只用 workDir 和 selectedFiles 的稳定派生值（文件名列表），避免循环
@@ -113,10 +127,15 @@ export function TranslationTable() {
     return out;
   }, [selectedFiles, entriesByFile]);
 
+  const workEntries = useMemo(
+    () => allEntries.filter(isTranslationWorkItem),
+    [allEntries],
+  );
+
   // 搜索 + 过滤
   const visibleEntries = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return allEntries.filter((e) => {
+    return workEntries.filter((e) => {
       if (onlyPending && e.target) return false;
       if (!q) return true;
       return (
@@ -125,10 +144,10 @@ export function TranslationTable() {
         e.contentuid.toLowerCase().includes(q)
       );
     });
-  }, [allEntries, search, onlyPending]);
+  }, [workEntries, search, onlyPending]);
 
-  const total = allEntries.length;
-  const done = allEntries.filter(
+  const total = workEntries.length;
+  const done = workEntries.filter(
     (e) => e.status === "translated" || e.status === "edited",
   ).length;
 
@@ -147,18 +166,45 @@ export function TranslationTable() {
 
   const onTranslate = async () => {
     if (!workDir) return;
-    // 收集所有待翻译条目
-    const toTranslate = allEntries.filter(
-      (e) => e.source.length > 0 && e.target === "",
+    // 有待翻译条目时只补齐空译文；没有待翻译条目时，“重新翻译全部”会重算整组一致性。
+    const pendingEntries = workEntries.filter(
+      (e) => e.source.trim().length > 0 && e.target.trim() === "",
+    );
+    const retranslateAll = pendingEntries.length === 0;
+    const entriesForRequest = retranslateAll
+      ? workEntries.map((entry) => ({
+          ...entry,
+          target: "",
+          status: "pending" as TranslationStatus,
+          error: null,
+        }))
+      : workEntries;
+    const toTranslate = entriesForRequest.filter(
+      (e) => e.source.trim().length > 0 && e.target.trim() === "",
     );
     if (toTranslate.length === 0) {
-      setError("没有待翻译的条目（所有条目已有译文）");
+      setError("没有可翻译的条目");
       return;
     }
+    cancelRequestedRef.current = false;
+    completedIdsRef.current = new Set();
     setTranslating(true);
+    setCancelling(false);
     setError(null);
+    if (retranslateAll) {
+      for (const entry of workEntries) {
+        updateEntry(entry.id, {
+          target: "",
+          status: "pending",
+          error: null,
+        });
+      }
+    }
     try {
-      await translateEntries(workDir, allEntries, (e) => {
+      await translateEntries(workDir, entriesForRequest, styleHint.trim(), (e) => {
+        if (cancelRequestedRef.current && e.type !== "all_done") {
+          return;
+        }
         switch (e.type) {
           case "progress":
             setEntryStatus(e.entryId, e.status);
@@ -167,6 +213,7 @@ export function TranslationTable() {
             appendDelta(e.entryId, e.text);
             break;
           case "done":
+            completedIdsRef.current.add(e.entryId);
             updateEntry(e.entryId, {
               target: e.text,
               status: "translated",
@@ -183,9 +230,38 @@ export function TranslationTable() {
         }
       });
     } catch (e) {
-      setError(String(e));
+      if (!cancelRequestedRef.current) {
+        setError(String(e));
+      }
     } finally {
+      if (cancelRequestedRef.current) {
+        for (const entry of toTranslate) {
+          if (!completedIdsRef.current.has(entry.id)) {
+            updateEntry(entry.id, {
+              target: "",
+              status: "pending",
+              error: null,
+            });
+          }
+        }
+      }
       setTranslating(false);
+      setCancelling(false);
+      cancelRequestedRef.current = false;
+    }
+  };
+
+  const onCancelTranslate = async () => {
+    if (!translating || cancelling) return;
+    cancelRequestedRef.current = true;
+    setCancelling(true);
+    setError(null);
+    try {
+      await cancelTranslation();
+    } catch (e) {
+      cancelRequestedRef.current = false;
+      setError(`取消翻译失败: ${String(e)}`);
+      setCancelling(false);
     }
   };
 
@@ -210,8 +286,8 @@ export function TranslationTable() {
   return (
     <Card variant="flat" className="flex h-full flex-col">
       {/* 工具栏 */}
-      <div className="space-y-2 border-b p-3">
-        <div className="flex items-center justify-between gap-4">
+      <div className="shrink-0 border-b p-3">
+        <div className="flex min-h-8 items-center justify-between gap-4">
           <div className="min-w-0">
             <h3 className="text-sm font-semibold">
               翻译工作区
@@ -245,34 +321,58 @@ export function TranslationTable() {
               ) : (
                 <>
                   <Play className="h-4 w-4" />
-                  {pendingCount > 0 ? `翻译 ${pendingCount} 条` : "翻译全部"}
+                  {pendingCount > 0 ? `翻译 ${pendingCount} 条` : "重新翻译全部"}
                 </>
               )}
             </Button>
+            {translating && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onCancelTranslate}
+                disabled={cancelling}
+              >
+                {cancelling ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CircleStop className="h-4 w-4" />
+                )}
+                {cancelling ? "取消中…" : "取消翻译"}
+              </Button>
+            )}
           </div>
         </div>
-        {total > 0 && (
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="搜索原文、译文或 contentuid…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="h-8 pl-8 text-xs"
-              />
-            </div>
-            <Button
-              size="sm"
-              variant={onlyPending ? "default" : "outline"}
-              className="h-8 text-xs"
-              onClick={() => setOnlyPending(!onlyPending)}
-            >
-              {onlyPending ? "✓ " : ""}
-              仅待翻译
-            </Button>
+        <div className="mt-2 flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="搜索原文、译文或 contentuid…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              disabled={total === 0}
+              className="h-8 pl-8 text-xs"
+            />
           </div>
-        )}
+          <Button
+            size="sm"
+            variant={onlyPending ? "default" : "outline"}
+            className="h-8 text-xs"
+            onClick={() => setOnlyPending(!onlyPending)}
+            disabled={total === 0}
+          >
+            {onlyPending ? "✓ " : ""}
+            仅待翻译
+          </Button>
+        </div>
+        <div className="relative mt-2">
+          <WandSparkles className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={styleHint}
+            onChange={(e) => setStyleHint(e.target.value)}
+            placeholder="本 MOD 语境：例如 XX 是姿势名称，相关名词按姿势类型翻译"
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
       </div>
 
       {/* 条目列表 */}

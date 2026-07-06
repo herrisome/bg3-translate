@@ -92,7 +92,6 @@ export interface BackendError {
 export interface GlossaryEntry {
   source: string;
   target: string;
-  category: string;
   sourceKind: string;
   enabled: boolean;
   ambiguous: boolean;

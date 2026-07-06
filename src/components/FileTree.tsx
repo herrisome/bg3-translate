@@ -117,18 +117,14 @@ function TreeRow({
     return (
       <div>
         <div
-          className="flex w-full items-center gap-1 rounded px-2 py-1 text-sm hover:bg-accent"
+          className="grid w-full grid-cols-[14px_auto_16px_minmax(0,1fr)_42px] items-center gap-1 rounded px-2 py-1 text-sm hover:bg-accent"
           style={{ paddingLeft: depth * 16 + 4 }}
         >
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <Checkbox
-            state={folderState}
-            onToggle={toggleFolder}
-            className="mr-0.5"
-          />
-          <Package className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="truncate">{node.name}</span>
-          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          <Checkbox state={folderState} onToggle={toggleFolder} />
+          <Package className="h-4 w-4 text-muted-foreground" />
+          <span className="min-w-0 truncate">{node.name}</span>
+          <span className="text-right text-[10px] tabular-nums text-muted-foreground">
             {checkedCount}/{filesInFolder.length}
           </span>
         </div>
@@ -164,7 +160,7 @@ function TreeRow({
       {KIND_ICON[file.kind] ?? (
         <FileText className="h-4 w-4 text-muted-foreground" />
       )}
-      <span className="flex-1 truncate text-left">{node.name}</span>
+      <span className="min-w-0 flex-1 truncate text-left">{node.name}</span>
       {KIND_LABEL[file.kind] && (
         <span className="shrink-0 bg-secondary px-1.5 text-[10px] text-secondary-foreground">
           {KIND_LABEL[file.kind]}
@@ -228,7 +224,7 @@ export function FileTree({
 
   return (
     <Card variant="flat" className="flex h-full flex-col">
-      <div className="space-y-2 border-b p-3">
+      <div className="grid h-[104px] grid-rows-[1fr_32px] border-b p-3">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold">本地化文件</h3>
@@ -241,7 +237,7 @@ export function FileTree({
           <Button
             size="sm"
             variant={allSelected ? "default" : "outline"}
-            className="h-7 w-full text-xs"
+            className="h-8 w-full text-xs"
             onClick={toggleAll}
           >
             <Checkbox

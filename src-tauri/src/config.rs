@@ -42,8 +42,7 @@ pub fn load() -> Result<LlmSettings> {
         return Ok(LlmSettings::default());
     }
     let content = std::fs::read_to_string(&path)?;
-    let settings: LlmSettings =
-        serde_json::from_str(&content).unwrap_or_default();
+    let settings: LlmSettings = serde_json::from_str(&content).unwrap_or_default();
     Ok(settings)
 }
 

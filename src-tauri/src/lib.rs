@@ -26,10 +26,12 @@ pub fn run() {
         .manage::<Mutex<Option<types::LlmSettings>>>(Mutex::new(None))
         .invoke_handler(tauri::generate_handler![
             commands::open_mod,
+            commands::extract_mod,
             commands::read_file_entries,
             commands::write_file_entries,
             commands::repack_mod,
             commands::translate_entries,
+            commands::cancel_translation,
             commands::save_llm_settings,
             commands::load_llm_settings,
             commands::list_glossary,

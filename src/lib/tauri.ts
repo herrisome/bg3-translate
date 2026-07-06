@@ -5,6 +5,7 @@ import type {
   Glossary,
   GlossaryEntry,
   LlmSettings,
+  PakFile,
   TranslationEntry,
   TranslationEvent,
 } from "./types";
@@ -30,6 +31,15 @@ export async function pickSavePath(defaultName: string): Promise<string | null> 
   });
 }
 
+/** 选择解压输出目录 */
+export async function pickExtractDirectory(): Promise<string | null> {
+  const selected = await openDialog({
+    multiple: false,
+    directory: true,
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
 // ─────────────────────────────────────────────────────────────
 // 后端命令封装
 // ─────────────────────────────────────────────────────────────
@@ -37,6 +47,14 @@ export async function pickSavePath(defaultName: string): Promise<string | null> 
 /** 打开并解包 MOD 文件（.pak 或 .zip），返回文件列表 */
 export async function openMod(filePath: string): Promise<ExtractResult> {
   return invoke<ExtractResult>("open_mod", { filePath });
+}
+
+/** 仅解压 MOD 文件到指定目录 */
+export async function extractMod(
+  filePath: string,
+  outputDir: string,
+): Promise<PakFile[]> {
+  return invoke<PakFile[]>("extract_mod", { filePath, outputDir });
 }
 
 /** 读取指定 PAK 文件的可翻译条目（XML/LSX/LOCA 统一为 TranslationEntry） */
@@ -88,11 +106,22 @@ export async function loadLlmSettings(): Promise<LlmSettings> {
 export async function translateEntries(
   workDir: string,
   entries: TranslationEntry[],
+  styleHint: string,
   onEvent: (e: TranslationEvent) => void,
 ): Promise<void> {
   const channel = new Channel<TranslationEvent>();
   channel.onmessage = onEvent;
-  await invoke("translate_entries", { workDir, entries, onEvent: channel });
+  await invoke("translate_entries", {
+    workDir,
+    entries,
+    styleHint,
+    onEvent: channel,
+  });
+}
+
+/** 请求取消当前翻译任务 */
+export async function cancelTranslation(): Promise<void> {
+  await invoke("cancel_translation");
 }
 
 // ─────────────────────────────────────────────────────────────

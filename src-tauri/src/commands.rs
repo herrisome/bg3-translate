@@ -1,5 +1,10 @@
 //! Tauri 命令入口，前端通过 invoke 调用。
 
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
 use reqwest::Client;
 use tauri::ipc::Channel;
 use tauri::State;
@@ -10,19 +15,19 @@ use crate::formats;
 use crate::glossary;
 use crate::pak;
 use crate::translation;
-use crate::types::{
-    ExtractResult, LlmSettings, PakFileKind, TranslationEntry, TranslationEvent,
-};
+use crate::types::{ExtractResult, LlmSettings, PakFileKind, TranslationEntry, TranslationEvent};
 
 /// 共享的应用状态。
 pub struct AppState {
     pub http: Client,
+    pub translation_cancelled: Arc<AtomicBool>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
             http: Client::new(),
+            translation_cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -40,6 +45,17 @@ pub async fn open_mod(file_path: String) -> Result<ExtractResult> {
     })
 }
 
+/// 仅解压 MOD 文件到指定目录。
+#[tauri::command]
+pub async fn extract_mod(
+    file_path: String,
+    output_dir: String,
+) -> Result<Vec<crate::types::PakFile>> {
+    tokio::task::spawn_blocking(move || pak::extract_to_directory(&file_path, &output_dir))
+        .await
+        .map_err(|e| AppError::Other(format!("任务失败: {e}")))?
+}
+
 /// 读取指定文件的可翻译条目。
 #[tauri::command]
 pub async fn read_file_entries(
@@ -50,11 +66,9 @@ pub async fn read_file_entries(
     let kind = pak::classify_file(&file_name);
     let work_dir = work_dir.clone();
     let file_name = file_name.clone();
-    tokio::task::spawn_blocking(move || {
-        formats::read_entries(&work_dir, &file_name, &kind)
-    })
-    .await
-    .map_err(|e| AppError::Other(format!("任务失败: {e}")))?
+    tokio::task::spawn_blocking(move || formats::read_entries(&work_dir, &file_name, &kind))
+        .await
+        .map_err(|e| AppError::Other(format!("任务失败: {e}")))?
 }
 
 /// 写回编辑后的条目。
@@ -87,13 +101,14 @@ pub async fn translate_entries(
     settings: State<'_, std::sync::Mutex<Option<LlmSettings>>>,
     _work_dir: String,
     entries: Vec<TranslationEntry>,
+    style_hint: Option<String>,
     on_event: Channel<TranslationEvent>,
 ) -> Result<()> {
     // 取设置：优先用参数里的状态，否则从持久化配置读取
     let settings = {
-        let guard = settings.lock().map_err(|e| {
-            AppError::Config(format!("设置锁错误: {e}"))
-        })?;
+        let guard = settings
+            .lock()
+            .map_err(|e| AppError::Config(format!("设置锁错误: {e}")))?;
         match guard.clone() {
             Some(s) => s,
             None => config::load()?,
@@ -108,7 +123,24 @@ pub async fn translate_entries(
 
     // 加载术语表
     let glossary = glossary::load()?;
-    translation::translate_entries(&state.http, &settings, &glossary, &entries, &on_event).await
+    state.translation_cancelled.store(false, Ordering::SeqCst);
+    translation::translate_entries(
+        &state.http,
+        &settings,
+        &glossary,
+        &entries,
+        style_hint.unwrap_or_default(),
+        &on_event,
+        state.translation_cancelled.clone(),
+    )
+    .await
+}
+
+/// 请求取消当前翻译任务。
+#[tauri::command]
+pub async fn cancel_translation(state: State<'_, AppState>) -> Result<()> {
+    state.translation_cancelled.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 // ── 术语表命令 ──

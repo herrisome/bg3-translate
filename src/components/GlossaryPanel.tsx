@@ -12,12 +12,12 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import {
   addGlossaryEntry,
   deleteGlossaryEntry,
@@ -26,28 +26,13 @@ import {
   resetGlossary,
   updateGlossaryEntry,
 } from "@/lib/tauri";
+import { AppTopBar } from "@/components/AppTopBar";
 import type { Glossary, GlossaryEntry } from "@/lib/types";
-
-const CATEGORY_LABEL: Record<string, string> = {
-  name_or_title: "名称/标题",
-  mechanic: "机制",
-  ui_or_mechanic: "UI/机制",
-  class: "职业",
-  race: "种族",
-  location: "地点",
-  character: "角色",
-  creature: "生物",
-  spell: "法术",
-  alignment: "阵营",
-  short_phrase: "短语",
-  legacy: "旧",
-};
 
 function newEmptyEntry(): GlossaryEntry {
   return {
     source: "",
     target: "",
-    category: "name_or_title",
     sourceKind: "user",
     enabled: true,
     ambiguous: false,
@@ -57,12 +42,17 @@ function newEmptyEntry(): GlossaryEntry {
   };
 }
 
-export function GlossaryPanel({ onClose }: { onClose: () => void }) {
+export function GlossaryPanel({
+  onClose,
+  embedded = false,
+}: {
+  onClose: () => void;
+  embedded?: boolean;
+}) {
   const [glossary, setGlossary] = useState<Glossary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [editing, setEditing] = useState<GlossaryEntry | null>(null);
   const [editOriginal, setEditOriginal] = useState<string | null>(null);
   const [limit, setLimit] = useState(200);
@@ -84,29 +74,17 @@ export function GlossaryPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
-  // 统计分类
-  const categories = useMemo(() => {
-    if (!glossary) return [];
-    const map = new Map<string, number>();
-    for (const t of glossary.terms) {
-      map.set(t.category, (map.get(t.category) ?? 0) + 1);
-    }
-    return [...map.entries()].sort((a, b) => b[1] - a[1]);
-  }, [glossary]);
-
   // 过滤 + 搜索（只渲染前 limit 条，避免 20K 条卡顿）
   const visible = useMemo(() => {
     if (!glossary) return [];
     const q = search.trim().toLowerCase();
-    return glossary.terms
-      .filter((t) => categoryFilter === "all" || t.category === categoryFilter)
-      .filter(
-        (t) =>
-          !q ||
-          t.source.toLowerCase().includes(q) ||
-          t.target.toLowerCase().includes(q),
-      );
-  }, [glossary, search, categoryFilter]);
+    return glossary.terms.filter(
+      (t) =>
+        !q ||
+        t.source.toLowerCase().includes(q) ||
+        t.target.toLowerCase().includes(q),
+    );
+  }, [glossary, search]);
 
   const onSave = async () => {
     if (!editing) return;
@@ -185,42 +163,71 @@ export function GlossaryPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="flex h-full flex-col">
-      {/* 顶部工具栏 */}
-      <div className="flex items-center justify-between border-b px-4 py-3">
-        <div>
-          <h2 className="text-sm font-semibold">术语表</h2>
-          <p className="text-xs text-muted-foreground">
-            {glossary ? `${glossary.terms.length} 条术语` : "加载中…"}
-            {visible.length !== glossary?.terms.length && `（当前显示 ${visible.length}）`}
-          </p>
+      {!embedded && (
+        <AppTopBar
+          title="术语表"
+          subtitle={
+            glossary
+              ? `${glossary.terms.length} 条术语${
+                  visible.length !== glossary.terms.length
+                    ? `，当前显示 ${visible.length}`
+                    : ""
+                }`
+              : "加载中..."
+          }
+          onClose={onClose}
+          actions={
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={onImport}>
+                <Upload className="h-4 w-4" />
+                <span className="hidden sm:inline">导入</span>
+              </Button>
+              <Button size="sm" variant="outline" onClick={onReset}>
+                <RotateCcw className="h-4 w-4" />
+                <span className="hidden sm:inline">重置</span>
+              </Button>
+              <Button size="sm" onClick={startAdd}>
+                <Plus className="h-4 w-4" />
+                <span className="hidden sm:inline">新增</span>
+              </Button>
+            </div>
+          }
+        />
+      )}
+      {embedded && (
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b px-4 py-2">
+          <div className="min-w-0 text-xs text-muted-foreground">
+            {glossary
+              ? `${glossary.terms.length} 条术语${
+                  visible.length !== glossary.terms.length
+                    ? `，当前显示 ${visible.length}`
+                    : ""
+                }`
+              : "加载中..."}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button size="sm" variant="outline" onClick={onImport}>
+              <Upload className="h-4 w-4" />
+              <span className="hidden sm:inline">导入</span>
+            </Button>
+            <Button size="sm" variant="outline" onClick={onReset}>
+              <RotateCcw className="h-4 w-4" />
+              <span className="hidden sm:inline">重置</span>
+            </Button>
+            <Button size="sm" onClick={startAdd}>
+              <Plus className="h-4 w-4" />
+              <span className="hidden sm:inline">新增</span>
+            </Button>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button size="sm" variant="outline" onClick={onImport}>
-            <Upload className="h-4 w-4" />
-            <span className="hidden sm:inline">导入</span>
-          </Button>
-          <Button size="sm" variant="outline" onClick={onReset}>
-            <RotateCcw className="h-4 w-4" />
-            <span className="hidden sm:inline">重置</span>
-          </Button>
-          <Button size="sm" onClick={startAdd}>
-            <Plus className="h-4 w-4" />
-            <span className="hidden sm:inline">新增</span>
-          </Button>
-          <Button size="sm" variant="ghost" onClick={onClose}>
-            <X className="h-4 w-4" />
-            <span className="hidden sm:inline">关闭</span>
-          </Button>
-        </div>
-      </div>
-
+      )}
       {error && (
         <div className="bg-destructive px-4 py-2 text-sm text-destructive-foreground">
           ⚠ {error}
         </div>
       )}
 
-      {/* 搜索 + 分类筛选 */}
+      {/* 搜索 */}
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
         <div className="relative flex-1">
           <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -234,21 +241,6 @@ export function GlossaryPanel({ onClose }: { onClose: () => void }) {
             className="h-8 pl-8 text-xs"
           />
         </div>
-        <select
-          className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-          value={categoryFilter}
-          onChange={(e) => {
-            setCategoryFilter(e.target.value);
-            setLimit(200);
-          }}
-        >
-          <option value="all">全部分类</option>
-          {categories.map(([cat, count]) => (
-            <option key={cat} value={cat}>
-              {CATEGORY_LABEL[cat] ?? cat} ({count})
-            </option>
-          ))}
-        </select>
       </div>
 
       {/* 列表 */}
@@ -268,43 +260,24 @@ export function GlossaryPanel({ onClose }: { onClose: () => void }) {
               <tr className="text-left text-xs text-muted-foreground">
                 <th className="px-4 py-2 font-medium">英文 (source)</th>
                 <th className="px-4 py-2 font-medium">中文 (target)</th>
-                <th className="px-3 py-2 font-medium">分类</th>
-                <th className="px-3 py-2 font-medium">状态</th>
                 <th className="px-4 py-2 font-medium">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {visible.slice(0, limit).map((t) => (
-                <tr key={t.source} className="hover:bg-accent/50">
+                <tr
+                  key={t.source}
+                  className={cn(
+                    "hover:bg-accent/50",
+                    !t.enabled &&
+                      "bg-muted/30 text-muted-foreground opacity-60 hover:bg-muted/40",
+                  )}
+                >
                   <td className="max-w-[180px] truncate px-4 py-1.5 sm:max-w-[280px]" title={t.source}>
                     {t.source}
                   </td>
                   <td className="max-w-[180px] truncate px-4 py-1.5 sm:max-w-[280px]" title={t.target}>
                     {t.target}
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <span className="text-xs text-muted-foreground">
-                      {CATEGORY_LABEL[t.category] ?? t.category}
-                    </span>
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <div className="flex gap-1">
-                      {!t.enabled && (
-                        <Badge variant="secondary" className="text-[10px]">
-                          已禁用
-                        </Badge>
-                      )}
-                      {t.ambiguous && (
-                        <Badge variant="warning" className="text-[10px]">
-                          歧义
-                        </Badge>
-                      )}
-                      {t.sourceKind === "user" && (
-                        <Badge variant="default" className="text-[10px]">
-                          自定义
-                        </Badge>
-                      )}
-                    </div>
                   </td>
                   <td className="px-4 py-1.5">
                     <div className="flex gap-1">
@@ -379,45 +352,29 @@ export function GlossaryPanel({ onClose }: { onClose: () => void }) {
                   className="min-h-[40px] text-sm"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">分类</Label>
-                  <select
-                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-                    value={editing.category}
-                    onChange={(e) => setEditing({ ...editing, category: e.target.value })}
-                  >
-                    {Object.entries(CATEGORY_LABEL).map(([k, v]) => (
-                      <option key={k} value={k}>
-                        {v}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">选项</Label>
-                  <div className="flex flex-col gap-1 pt-1 text-xs">
-                    <label className="flex items-center gap-1.5">
-                      <input
-                        type="checkbox"
-                        checked={editing.enabled}
-                        onChange={(e) =>
-                          setEditing({ ...editing, enabled: e.target.checked })
-                        }
-                      />
-                      启用
-                    </label>
-                    <label className="flex items-center gap-1.5">
-                      <input
-                        type="checkbox"
-                        checked={editing.wholeWord}
-                        onChange={(e) =>
-                          setEditing({ ...editing, wholeWord: e.target.checked })
-                        }
-                      />
-                      整词匹配
-                    </label>
-                  </div>
+              <div className="space-y-1">
+                <Label className="text-xs">选项</Label>
+                <div className="flex flex-wrap gap-4 pt-1 text-xs">
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={editing.enabled}
+                      onChange={(e) =>
+                        setEditing({ ...editing, enabled: e.target.checked })
+                      }
+                    />
+                    启用
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={editing.wholeWord}
+                      onChange={(e) =>
+                        setEditing({ ...editing, wholeWord: e.target.checked })
+                      }
+                    />
+                    整词匹配
+                  </label>
                 </div>
               </div>
             </div>

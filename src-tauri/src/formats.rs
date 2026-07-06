@@ -20,10 +20,7 @@ pub fn read_entries(
 ) -> Result<Vec<TranslationEntry>> {
     let path = crate::pak::resolve_disk_path(work_dir, file_name);
     if !path.exists() {
-        return Err(AppError::Config(format!(
-            "文件不存在: {}",
-            path.display()
-        )));
+        return Err(AppError::Config(format!("文件不存在: {}", path.display())));
     }
     match kind {
         PakFileKind::LocalizationXml => read_content_list_xml(&path, file_name),
@@ -41,6 +38,9 @@ pub fn write_entries(
     entries: &[TranslationEntry],
 ) -> Result<()> {
     let path = crate::pak::resolve_disk_path(work_dir, file_name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     match kind {
         PakFileKind::LocalizationXml => write_content_list_xml(&path, entries),
         PakFileKind::LocalizationLoca => write_loca(&path, entries),
@@ -58,10 +58,7 @@ pub fn write_entries(
 //     <content contentuid="h..." version="1">文本</content>
 //   </contentList>
 
-fn read_content_list_xml(
-    path: &Path,
-    file_name: &str,
-) -> Result<Vec<TranslationEntry>> {
+fn read_content_list_xml(path: &Path, file_name: &str) -> Result<Vec<TranslationEntry>> {
     let content = std::fs::read_to_string(path)?;
     Ok(parse_content_list(&content, file_name))
 }
@@ -93,12 +90,10 @@ pub fn parse_content_list(xml: &str, file_name: &str) -> Vec<TranslationEntry> {
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
                         b"contentuid" => {
-                            contentuid =
-                                attr.unescape_value().unwrap_or_default().into_owned();
+                            contentuid = attr.unescape_value().unwrap_or_default().into_owned();
                         }
                         b"version" => {
-                            version =
-                                attr.unescape_value().unwrap_or_default().into_owned();
+                            version = attr.unescape_value().unwrap_or_default().into_owned();
                         }
                         _ => {}
                     }
@@ -113,12 +108,10 @@ pub fn parse_content_list(xml: &str, file_name: &str) -> Vec<TranslationEntry> {
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
                         b"contentuid" => {
-                            contentuid =
-                                attr.unescape_value().unwrap_or_default().into_owned();
+                            contentuid = attr.unescape_value().unwrap_or_default().into_owned();
                         }
                         b"version" => {
-                            version =
-                                attr.unescape_value().unwrap_or_default().into_owned();
+                            version = attr.unescape_value().unwrap_or_default().into_owned();
                         }
                         _ => {}
                     }
@@ -217,7 +210,7 @@ fn make_entry(
 }
 
 fn write_content_list_xml(path: &Path, entries: &[TranslationEntry]) -> Result<()> {
-    use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
+    use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
     use quick_xml::Writer;
     use std::io::Cursor;
 
@@ -237,10 +230,12 @@ fn write_content_list_xml(path: &Path, entries: &[TranslationEntry]) -> Result<(
             .write_event(Event::Start(start))
             .map_err(|err| AppError::Xml(format!("{err}")))?;
         // 优先用译文；若译文空则保留原文
-        let text = if e.target.is_empty() { &e.source } else { &e.target };
-        writer
-            .write_event(Event::Text(BytesText::new(text)))
-            .map_err(|err| AppError::Xml(format!("{err}")))?;
+        let text = if e.target.is_empty() {
+            &e.source
+        } else {
+            &e.target
+        };
+        write_content_fragment(&mut writer, text)?;
         writer
             .write_event(Event::End(BytesEnd::new("content")))
             .map_err(|err| AppError::Xml(format!("{err}")))?;
@@ -252,6 +247,75 @@ fn write_content_list_xml(path: &Path, entries: &[TranslationEntry]) -> Result<(
     let result = writer.into_inner().into_inner();
     std::fs::write(path, result)?;
     Ok(())
+}
+
+/// 写入 content 内部片段：普通文本转义，BG3 富文本标签保留为 XML 标签。
+fn write_content_fragment<W: std::io::Write>(
+    writer: &mut quick_xml::Writer<W>,
+    text: &str,
+) -> Result<()> {
+    use quick_xml::events::{BytesText, Event};
+
+    let mut rest = text;
+    while let Some(start) = rest.find('<') {
+        if start > 0 {
+            writer
+                .write_event(Event::Text(BytesText::new(&rest[..start])))
+                .map_err(|err| AppError::Xml(format!("{err}")))?;
+        }
+
+        let after_lt = &rest[start..];
+        let Some(end_rel) = after_lt.find('>') else {
+            writer
+                .write_event(Event::Text(BytesText::new(after_lt)))
+                .map_err(|err| AppError::Xml(format!("{err}")))?;
+            return Ok(());
+        };
+
+        let end = start + end_rel + 1;
+        let tag = &rest[start..end];
+        if is_allowed_inline_tag(tag) {
+            writer
+                .get_mut()
+                .write_all(tag.as_bytes())
+                .map_err(|err| AppError::Xml(format!("{err}")))?;
+        } else {
+            writer
+                .write_event(Event::Text(BytesText::new(tag)))
+                .map_err(|err| AppError::Xml(format!("{err}")))?;
+        }
+        rest = &rest[end..];
+    }
+
+    if !rest.is_empty() {
+        writer
+            .write_event(Event::Text(BytesText::new(rest)))
+            .map_err(|err| AppError::Xml(format!("{err}")))?;
+    }
+    Ok(())
+}
+
+fn is_allowed_inline_tag(tag: &str) -> bool {
+    if !tag.starts_with('<')
+        || !tag.ends_with('>')
+        || tag.starts_with("<?")
+        || tag.starts_with("<!")
+    {
+        return false;
+    }
+
+    let inner = tag[1..tag.len() - 1].trim();
+    let inner = inner
+        .strip_prefix('/')
+        .unwrap_or(inner)
+        .trim()
+        .trim_end_matches('/')
+        .trim();
+    let name = inner
+        .split(|c: char| c.is_whitespace() || c == '/')
+        .next()
+        .unwrap_or("");
+    matches!(name, "LSTag" | "font" | "i" | "b" | "u" | "br")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -269,10 +333,7 @@ fn write_loca(path: &Path, entries: &[TranslationEntry]) -> Result<()> {
     Ok(())
 }
 
-fn loca_resource_to_entries(
-    resource: LocaResource,
-    file_name: &str,
-) -> Vec<TranslationEntry> {
+fn loca_resource_to_entries(resource: LocaResource, file_name: &str) -> Vec<TranslationEntry> {
     resource
         .entries
         .into_iter()
@@ -294,7 +355,11 @@ fn entries_to_loca_resource(entries: &[TranslationEntry]) -> LocaResource {
     let mapped = entries
         .iter()
         .map(|e| {
-            let text = if e.target.is_empty() { &e.source } else { &e.target };
+            let text = if e.target.is_empty() {
+                &e.source
+            } else {
+                &e.target
+            };
             LocalizedText::new(
                 e.contentuid.clone(),
                 e.version.parse().unwrap_or(1),
@@ -315,14 +380,19 @@ fn entries_to_loca_resource(entries: &[TranslationEntry]) -> LocaResource {
 // 翻译后写回，保留原 XML 结构和 BOM。
 
 /// LSX 中可翻译的 attribute id 白名单。
-const LSX_TRANSLATABLE_FIELDS: &[&str] =
-    &["Description", "DisplayName", "Title", "Tooltip", "TooltipDescription"];
+const LSX_TRANSLATABLE_FIELDS: &[&str] = &[
+    "Description",
+    "DisplayName",
+    "Title",
+    "Tooltip",
+    "TooltipDescription",
+];
 
 fn read_lsx(path: &Path, file_name: &str) -> Result<Vec<TranslationEntry>> {
     let bytes = std::fs::read(path)?;
     let content = strip_bom(&bytes);
-    let xml = String::from_utf8(content)
-        .map_err(|e| AppError::Xml(format!("LSX 非 UTF-8: {e}")))?;
+    let xml =
+        String::from_utf8(content).map_err(|e| AppError::Xml(format!("LSX 非 UTF-8: {e}")))?;
     Ok(parse_lsx_translatable(&xml, file_name))
 }
 
@@ -369,29 +439,20 @@ fn parse_lsx_translatable(xml: &str, file_name: &str) -> Vec<TranslationEntry> {
     reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
     let mut entries = Vec::new();
-    let mut occurrence: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
+    let mut occurrence: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     loop {
         buf.clear();
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Empty(e)) | Ok(Event::Start(e))
-                if e.name().as_ref() == b"attribute" =>
-            {
+            Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.name().as_ref() == b"attribute" => {
                 let mut id = String::new();
                 let mut typ = String::new();
                 let mut value = String::new();
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
-                        b"id" => {
-                            id = attr.unescape_value().unwrap_or_default().into_owned()
-                        }
-                        b"type" => {
-                            typ = attr.unescape_value().unwrap_or_default().into_owned()
-                        }
-                        b"value" => {
-                            value = attr.unescape_value().unwrap_or_default().into_owned()
-                        }
+                        b"id" => id = attr.unescape_value().unwrap_or_default().into_owned(),
+                        b"type" => typ = attr.unescape_value().unwrap_or_default().into_owned(),
+                        b"value" => value = attr.unescape_value().unwrap_or_default().into_owned(),
                         _ => {}
                     }
                 }
@@ -513,5 +574,34 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert!(entries[0].source.contains("<LSTag"));
         assert!(entries[0].source.contains("{1}"));
+    }
+
+    #[test]
+    fn write_content_list_preserves_bg3_inline_tags() {
+        let path = std::env::temp_dir().join(format!(
+            "bg3-translate-test-{}.xml",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let entries = vec![TranslationEntry {
+            id: "test.xml#h1".into(),
+            source_file: "test.xml".into(),
+            source: "Cast <LSTag Tag=\"Fire\">Fireball</LSTag>".into(),
+            target: "施放 <LSTag Tag=\"Fire\">火球术</LSTag> & 保留".into(),
+            contentuid: "h1".into(),
+            version: "1".into(),
+            status: "translated".into(),
+            error: None,
+        }];
+
+        write_content_list_xml(&path, &entries).unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(out.contains("<LSTag Tag=\"Fire\">火球术</LSTag>"));
+        assert!(out.contains("&amp; 保留"));
+        assert!(!out.contains("&lt;LSTag"));
     }
 }

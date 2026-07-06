@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { NumberInput } from "@/components/ui/number-input";
 import { loadLlmSettings, saveLlmSettings } from "@/lib/tauri";
 import { useAppStore } from "@/store/app-store";
 import type { LlmSettings } from "@/lib/types";
@@ -35,10 +36,18 @@ export function SettingsPanel({ compact = false }: { compact?: boolean }) {
   }, []);
 
   const onSave = async () => {
+    const concurrency = Number.isFinite(form.concurrency)
+      ? form.concurrency
+      : 1;
+    const normalizedForm = {
+      ...form,
+      concurrency: Math.min(100, Math.max(1, concurrency)),
+    };
     setSaving(true);
     try {
-      await saveLlmSettings(form);
-      setSettings(form);
+      await saveLlmSettings(normalizedForm);
+      setForm(normalizedForm);
+      setSettings(normalizedForm);
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } finally {
@@ -47,8 +56,12 @@ export function SettingsPanel({ compact = false }: { compact?: boolean }) {
   };
 
   return (
-    <Card className={compact ? "border-0 shadow-none" : ""}>
-      <CardHeader>
+    <Card
+      className={
+        compact ? "border-0 bg-transparent shadow-none rounded-none" : ""
+      }
+    >
+      <CardHeader className={compact ? "p-0 pb-5" : ""}>
         <CardTitle className="flex items-center gap-2 text-base">
           <Settings2 className="h-4 w-4" />
           大模型配置
@@ -57,7 +70,7 @@ export function SettingsPanel({ compact = false }: { compact?: boolean }) {
           使用 OpenAI 兼容协议，支持 DeepSeek、智谱、Kimi、OpenAI、本地 Ollama 等
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className={compact ? "space-y-4 p-0" : "space-y-4"}>
         <div className="space-y-2">
           <Label htmlFor="baseUrl">API Base URL</Label>
           <Input
@@ -91,18 +104,15 @@ export function SettingsPanel({ compact = false }: { compact?: boolean }) {
         </div>
         <div className="space-y-2">
           <Label htmlFor="concurrency">并发数（同时翻译的条目数）</Label>
-          <Input
+          <NumberInput
             id="concurrency"
-            type="number"
             min={1}
-            max={16}
+            max={100}
             value={form.concurrency}
-            onChange={(e) =>
-              setForm({ ...form, concurrency: Number(e.target.value) })
-            }
+            onValueChange={(concurrency) => setForm({ ...form, concurrency })}
           />
           <p className="text-xs text-muted-foreground">
-            数值越大翻译越快，但会增加 API 并发请求量。建议 4-8。
+            数值越大翻译越快，但会增加 API 并发请求量。建议 4-8，最高 100。
           </p>
         </div>
         <Button onClick={onSave} disabled={saving} className="w-full">
