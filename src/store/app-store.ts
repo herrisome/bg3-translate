@@ -15,7 +15,7 @@ export type Theme = "light" | "dark" | "cyberpunk" | "dungeon";
 export const THEMES: { value: Theme; label: string; desc: string }[] = [
   { value: "light", label: "浅色", desc: "明亮简洁" },
   { value: "dark", label: "深色", desc: "护眼夜间" },
-  { value: "cyberpunk", label: "赛博朋克", desc: "霓虹粉青" },
+  { value: "cyberpunk", label: "赛博朋克", desc: "黄青高对比" },
   { value: "dungeon", label: "地下城", desc: "羊皮纸烛火" },
 ];
 
