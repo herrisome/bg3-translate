@@ -1,4 +1,4 @@
-<img width="1800" height="1200" alt="image" src="https://github.com/user-attachments/assets/ab92cbdf-e136-49ac-aaa5-5ba8c804b93f" /># BG3 MOD 汉化工具 ✨
+# BG3 MOD 汉化工具 ✨
 
 一个给《博德之门 3》MOD 用的桌面汉化工具，核心就是三件事：打开 MOD、翻译文本、重新打包。
 
